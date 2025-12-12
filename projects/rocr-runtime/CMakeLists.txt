@@ -60,6 +60,12 @@ if (NOT DEFINED BUILD_ROCR)
   set(BUILD_ROCR ON)
 endif()
 
+## Doxygen API
+option(BUILD_DOCS "Build Doxygen documentation" OFF)
+if (BUILD_DOCS)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/runtime/docs)
+endif()
+
 function(add_rocm_subdir subdir subdir_assigns)
     message("add_rocm_subdir() -- " ${subdir})
     # message("  subdir_assigns before:" ${subdir_assigns} "EOM")
