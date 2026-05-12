@@ -39,7 +39,11 @@ jobs:
 
       - name: Merge upstream into develop
         run: |
-          git merge upstream/${{ env.SYNC_BRANCH }} --no-edit
+          if ! git merge upstream/${{ env.SYNC_BRANCH }} --no-edit; then
+            echo "::error::Merge conflict detected when syncing with upstream ${{ env.UPSTREAM_REPO }}/${{ env.SYNC_BRANCH }}. Manual intervention required."
+            git merge --abort
+            exit 1
+          fi
 
       - name: Push synced branch
         run: |
