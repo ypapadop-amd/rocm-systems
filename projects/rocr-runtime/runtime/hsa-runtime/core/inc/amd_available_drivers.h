@@ -47,6 +47,7 @@
 
 #ifdef __linux__
 #include "core/inc/amd_xdna_driver.h"
+#include "core/driver/dynamic/amd_dynamic_driver.h"
 #endif
 
 #endif  // header guard

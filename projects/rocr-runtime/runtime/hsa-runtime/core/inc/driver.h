@@ -65,6 +65,9 @@ enum class DriverType {
 #ifdef HSAKMT_VIRTIO_ENABLED
   KFD_VIRTIO,
 #endif
+#ifdef __linux__
+  DYNAMIC,
+#endif
   NUM_DRIVER_TYPES
 };
 

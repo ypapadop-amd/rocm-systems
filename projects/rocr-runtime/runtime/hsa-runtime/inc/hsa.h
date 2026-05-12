@@ -836,7 +836,11 @@ typedef enum {
   /**
    * AI Engine (AIE) device.
    */
-  HSA_DEVICE_TYPE_AIE = 3
+  HSA_DEVICE_TYPE_AIE = 3,
+  /**
+   * Dynamic device.
+   */
+  HSA_DEVICE_TYPE_DYNAMIC = 4
 } hsa_device_type_t;
 
 /**

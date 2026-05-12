@@ -113,7 +113,8 @@ class Agent : public Checked<0xF6BC25EB17E6F917> {
     kAmdGpuDevice = 0,
     kAmdCpuDevice = 1,
     kAmdAieDevice = 2,
-    kUnknownDevice = 3
+    kUnknownDevice = 3,
+    kDynamicDevice = 4
   };
 
   // @brief Agent class contructor.
