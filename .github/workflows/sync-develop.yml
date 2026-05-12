@@ -1,0 +1,46 @@
+name: Nightly Sync Develop with Upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+
+env:
+  UPSTREAM_REPO: ROCm/rocm-systems
+  SYNC_BRANCH: develop
+
+concurrency:
+  group: sync-develop-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync-develop:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.SYNC_BRANCH }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/${{ env.UPSTREAM_REPO }}.git
+
+      - name: Fetch upstream
+        run: |
+          git fetch upstream ${{ env.SYNC_BRANCH }}
+
+      - name: Merge upstream into develop
+        run: |
+          git merge upstream/${{ env.SYNC_BRANCH }} --no-edit
+
+      - name: Push synced branch
+        run: |
+          git push origin ${{ env.SYNC_BRANCH }}
