@@ -165,6 +165,7 @@ class MemoryRegion : public core::MemoryRegion {
   __forceinline static size_t GetPageSize() { return kPageSize_; }
 
   __forceinline const HsaMemFlags &mem_flags() const { return mem_flag_; }
+  __forceinline const HsaMemoryProperties &mem_props() const { return mem_props_; }
 
   void *fragment_alloc(size_t size) const {
     return fragment_allocator_.alloc(size);
