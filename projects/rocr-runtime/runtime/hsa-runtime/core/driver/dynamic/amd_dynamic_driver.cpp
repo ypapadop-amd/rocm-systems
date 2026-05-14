@@ -330,6 +330,12 @@ hsa_status_t DynamicDriver::GetQueueSaveAreaInfo(HSA_QUEUEID queue_id, void** ad
   return ftable_->get_queue_save_area_info(ftable_->ctx, queue_id, address, size);
 }
 
+void DynamicDriver::DestroyAgentData(void* driver_data) const {
+  if (ftable_->destroy_agent_data && driver_data) {
+    ftable_->destroy_agent_data(ftable_->ctx, driver_data);
+  }
+}
+
 void* DynamicDriver::GetCachedDriverData(uint32_t node_id) const {
   auto it = cached_driver_data_.find(node_id);
   if (it != cached_driver_data_.end()) {

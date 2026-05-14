@@ -127,6 +127,7 @@ public:
                                     size_t* size) const override;
 
   void* GetCachedDriverData(uint32_t node_id) const;
+  void DestroyAgentData(void* driver_data) const;
 
   hsa_status_t CreateQueueWithDriverData(uint32_t node_id, HSA_QUEUE_TYPE type, uint32_t queue_pct,
                                          HSA::hsa_amd_queue_priority_internal_t priority,
