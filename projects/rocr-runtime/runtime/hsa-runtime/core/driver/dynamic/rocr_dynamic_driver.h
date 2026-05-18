@@ -555,12 +555,13 @@ typedef struct rocr_dynamic_driver_ftable_t {
   /**
    * @brief Destroy the driver context itself.
    *
-   * Called once during DynamicDriver destruction. After this call, @c ctx
-   * is invalid and no other function pointer in this table will be invoked.
+   * Required — must be non-NULL. Called once during DynamicDriver
+   * destruction. After this call, @c ctx is invalid and no other function
+   * pointer in this table will be invoked.
    *
    * @param[in] ctx  Driver context to destroy.
    */
-  void (*destroy)(rocr_dynamic_driver_context_t* ctx);
+  void (*destroy_context)(rocr_dynamic_driver_context_t* ctx);
 } rocr_dynamic_driver_ftable_t;
 
 #ifdef __cplusplus

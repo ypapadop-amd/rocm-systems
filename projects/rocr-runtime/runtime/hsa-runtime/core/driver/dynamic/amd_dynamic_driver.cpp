@@ -35,10 +35,10 @@ DynamicDriver::DynamicDriver(rocr_dynamic_driver_ftable_t* ftable,
       ctx_(ctx) {}
 
 DynamicDriver::~DynamicDriver() {
-  if (ftable_ && ftable_->destroy) {
-    ftable_->destroy(ctx_);
+  if (ftable_) {
+    ftable_->destroy_context(ctx_);
+    ftable_ = nullptr;
   }
-  ftable_ = nullptr;
 }
 
 hsa_status_t DynamicDriver::Init() {
