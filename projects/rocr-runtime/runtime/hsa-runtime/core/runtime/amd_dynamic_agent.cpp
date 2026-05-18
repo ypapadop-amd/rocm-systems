@@ -277,15 +277,14 @@ hsa_status_t DynamicAgent::QueueCreate(size_t size, hsa_queue_type32_t queue_typ
 
   if (!shared_queue) return HSA_STATUS_ERROR_OUT_OF_RESOURCES;
 
-  auto aql_queue(new DynamicAqlQueue(shared_queue, this, size, node_id(), flags));
-  if (aql_queue == nullptr) {
+  try {
+    auto aql_queue(new DynamicAqlQueue(shared_queue, this, size, node_id(), flags));
+    *queue = aql_queue;
+    return HSA_STATUS_SUCCESS;
+  } catch (const hsa_exception& e) {
     core::Runtime::runtime_singleton_->system_deallocator()(shared_queue);
-    return HSA_STATUS_ERROR_OUT_OF_RESOURCES;
+    return e.error_code();
   }
-
-  *queue = aql_queue;
-
-  return HSA_STATUS_SUCCESS;
 }
 
 void DynamicAgent::InitRegionList() {

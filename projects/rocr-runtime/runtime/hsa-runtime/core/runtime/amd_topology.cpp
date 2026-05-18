@@ -438,7 +438,8 @@ bool BuildTopology() {
       // Current node is either a dGpu or Apu and might belong
       // to user visible list. Process node if present in usr
       // visible list, continue if not found
-      if (node_props.NumFComputeCores != 0) {
+      if (node_props.NumFComputeCores != 0 &&
+          driver->kernel_driver_type_ != core::DriverType::DYNAMIC) {
         if (filter) {
           int32_t devRank = rvdFilter.GetUsrDeviceRank(kfdIdx);
           if (devRank != (-1)) {
