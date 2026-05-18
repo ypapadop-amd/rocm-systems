@@ -61,7 +61,7 @@
 #include "core/inc/amd_aie_agent.h"
 #include "core/inc/amd_available_drivers.h"
 #include "core/inc/amd_dynamic_agent.h"
-#include "core/driver/dynamic/amd_dynamic_driver.h"
+#include "core/inc/amd_dynamic_driver.h"
 #include "core/inc/amd_cpu_agent.h"
 #include "core/inc/amd_filter_device.h"
 #include "core/inc/amd_gpu_agent.h"
