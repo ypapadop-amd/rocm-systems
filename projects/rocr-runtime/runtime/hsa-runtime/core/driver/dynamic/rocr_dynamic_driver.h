@@ -27,10 +27,6 @@ typedef struct rocr_dynamic_driver_ftable_t rocr_dynamic_driver_ftable_t;
 typedef struct rocr_dynamic_driver_context_t {
   /** Back-pointer to the function table. */
   rocr_dynamic_driver_ftable_t* ftable;
-
-  /** Opaque data owned by the driver implementation. Typically set during
-   *  @c init and freed during @c destroy. */
-  void* driver_data;
 } rocr_dynamic_driver_context_t;
 
 /**

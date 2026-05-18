@@ -29,7 +29,7 @@ hsa_status_t DynamicDriver::DiscoverDriver(std::unique_ptr<core::Driver>& driver
 DynamicDriver::DynamicDriver(rocr_dynamic_driver_ftable_t* ftable)
     : Driver(core::DriverType::DYNAMIC, ftable->devnode_name ? ftable->devnode_name : ""),
       ftable_(ftable),
-      ctx_(new rocr_dynamic_driver_context_t{ftable, nullptr}) {}
+      ctx_(new rocr_dynamic_driver_context_t{ftable}) {}
 
 DynamicDriver::~DynamicDriver() {
   if (ftable_ && ftable_->destroy) {
