@@ -267,6 +267,9 @@ if(UNIX)
   set(SRC_XDNA core/driver/xdna/amd_xdna_driver.cpp
                core/runtime/amd_aie_agent.cpp
                core/runtime/amd_aie_aql_queue.cpp)
+  set(SRC_DYNAMIC core/driver/dynamic/amd_dynamic_driver.cpp
+                  core/runtime/amd_dynamic_agent.cpp
+                  core/runtime/amd_dynamic_aql_queue.cpp)
 else()
   target_compile_definitions(${CORE_RUNTIME_TARGET} PRIVATE NOMINMAX)
   set(SRC_OS core/util/win/os_win.cpp
@@ -278,7 +281,7 @@ if ( BUILD_THUNK_VIRTIO )
   target_compile_definitions(hsa-runtime64 PRIVATE HSAKMT_VIRTIO_ENABLED=1)
 endif()
 
-target_sources( ${CORE_RUNTIME_TARGET} PRIVATE ${SRCS} ${SRC_OS} ${SRC_XDNA} )
+target_sources( ${CORE_RUNTIME_TARGET} PRIVATE ${SRCS} ${SRC_OS} ${SRC_XDNA} ${SRC_DYNAMIC} )
 
 ## Depend on trap handler target.
 add_subdirectory( ${CMAKE_CURRENT_SOURCE_DIR}/core/runtime/trap_handler )
@@ -476,6 +479,8 @@ install ( FILES ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.md DESTINATION ${CMAKE_INSTA
 
 # Install public headers
 install ( DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/inc/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hsa COMPONENT dev )
+install ( FILES ${CMAKE_CURRENT_SOURCE_DIR}/core/driver/dynamic/rocr_dynamic_driver.h
+          DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hsa COMPONENT dev )
 
 ## Configure and install package config file
 # Record our usage data for clients find_package calls.
