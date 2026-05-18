@@ -99,14 +99,10 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in]  ctx          Driver context.
    * @param[out] node_props   Filled with the node's properties.
    * @param[in]  node_id      Topology node index.
-   * @param[out] driver_data  Optional opaque per-agent data owned by the
-   *                          driver. Passed to the DynamicAgent constructor
-   *                          and later freed via @c destroy_agent_data. May
-   *                          be set to NULL if not needed.
    * @return HSA_STATUS_SUCCESS on success.
    */
   hsa_status_t (*get_node_properties)(rocr_dynamic_driver_context_t* ctx, HsaNodeProperties* node_props,
-                                      uint32_t node_id, void** driver_data);
+                                      uint32_t node_id);
 
   /**
    * @brief Retrieve I/O link (edge) properties for a node.
@@ -359,26 +355,21 @@ typedef struct rocr_dynamic_driver_ftable_t {
    *                                       notification, or NULL.
    * @param[out] queue_resource            Filled with the queue's hardware
    *                                       resource handles (e.g. QueueId).
-   * @param[out] driver_data               Opaque per-queue data owned by
-   *                                       the driver, freed via
-   *                                       @c destroy_queue.
    * @return HSA_STATUS_SUCCESS on success.
    */
   hsa_status_t (*create_queue)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, uint32_t type, uint32_t queue_pct,
                                 uint32_t priority, uint32_t sdma_engine_id, void* queue_addr,
                                 uint64_t queue_size_bytes, uint64_t queue_metadata_size_bytes,
-                                HsaEvent* event, HsaQueueResource* queue_resource,
-                                void** driver_data);
+                                HsaEvent* event, HsaQueueResource* queue_resource);
 
   /**
    * @brief Destroy a queue created by @c create_queue.
    * @param[in] ctx          Driver context.
    * @param[in] queue_id     Queue identifier from
    *                         @c HsaQueueResource::QueueId.
-   * @param[in] driver_data  Per-queue data returned by @c create_queue.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*destroy_queue)(rocr_dynamic_driver_context_t* ctx, uint64_t queue_id, void* driver_data);
+  hsa_status_t (*destroy_queue)(rocr_dynamic_driver_context_t* ctx, uint64_t queue_id);
 
   /**
    * @brief Update queue parameters (priority, size, event) on a live queue.
@@ -539,18 +530,6 @@ typedef struct rocr_dynamic_driver_ftable_t {
   hsa_status_t (*get_wallclock_frequency)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, uint64_t* frequency);
 
   /* ---- Cleanup ---------------------------------------------------------- */
-
-  /**
-   * @brief Destroy per-agent data returned by @c get_node_properties.
-   *
-   * Optional — may be NULL. Called by the DynamicAgent destructor to free
-   * the opaque @c driver_data pointer that was returned from
-   * @c get_node_properties.
-   *
-   * @param[in] ctx          Driver context.
-   * @param[in] driver_data  Per-agent data to free.
-   */
-  void (*destroy_agent_data)(rocr_dynamic_driver_context_t* ctx, void* driver_data);
 
   /**
    * @brief Destroy the driver context itself.

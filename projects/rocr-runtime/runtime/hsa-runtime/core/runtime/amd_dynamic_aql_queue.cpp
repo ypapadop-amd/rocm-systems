@@ -9,7 +9,6 @@
 #include <atomic>
 #include <cassert>
 
-#include "core/inc/amd_dynamic_driver.h"
 #include "core/inc/queue.h"
 #include "core/inc/runtime.h"
 #include "core/inc/signal.h"
@@ -51,10 +50,9 @@ DynamicAqlQueue::DynamicAqlQueue(core::SharedQueue* shared_queue, DynamicAgent* 
   signal_.queue_ptr = &amd_queue_;
 
   HsaQueueResource queue_resource = {};
-  auto& dyn_driver = static_cast<DynamicDriver&>(agent->driver());
-  hsa_status_t status = dyn_driver.CreateQueueWithDriverData(
+  hsa_status_t status = agent->driver().CreateQueue(
       node_id, HSA_QUEUE_COMPUTE_AQL, 0, rocr::HSA::HSA_AMD_QUEUE_PRIORITY_NORMAL, 0, nullptr,
-      queue_size_bytes_, 0, nullptr, queue_resource, &driver_data_);
+      queue_size_bytes_, 0, nullptr, queue_resource);
   if (status != HSA_STATUS_SUCCESS) {
     throw hsa_exception(status, "Failed to create a hardware context for a Dynamic queue.");
   }
@@ -79,11 +77,9 @@ DynamicAqlQueue::~DynamicAqlQueue() {
 hsa_status_t DynamicAqlQueue::Inactivate() {
   bool active = active_.exchange(false, std::memory_order_relaxed);
   if (active) {
-    auto& dyn_driver = static_cast<DynamicDriver&>(GetAgent()->driver());
-    auto err = dyn_driver.DestroyQueueWithDriverData(queue_id_, driver_data_);
+    auto err = GetAgent()->driver().DestroyQueue(queue_id_);
     assert(err == HSA_STATUS_SUCCESS && "Destroy queue failed.");
     (void)err;
-    driver_data_ = nullptr;
     atomic::Fence(std::memory_order_acquire);
   }
   return HSA_STATUS_SUCCESS;

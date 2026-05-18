@@ -15,7 +15,7 @@ namespace AMD {
 
 class DynamicAgent : public core::Agent {
 public:
-  DynamicAgent(uint32_t node, const HsaNodeProperties& node_props, void* driver_data);
+  DynamicAgent(uint32_t node, const HsaNodeProperties& node_props);
   ~DynamicAgent();
 
   hsa_status_t IterateRegion(hsa_status_t (*callback)(hsa_region_t region, void* data),
@@ -43,8 +43,6 @@ public:
     return regions_;
   }
 
-  void* driver_data() const { return driver_data_; }
-
   const std::function<void*(size_t, size_t, core::MemoryRegion::AllocateFlags)>&
   system_allocator() const { return system_allocator_; }
 
@@ -58,7 +56,6 @@ private:
   std::function<void*(size_t, size_t, core::MemoryRegion::AllocateFlags)> system_allocator_;
   std::function<void(void*)> system_deallocator_;
 
-  void* driver_data_;
   const HsaNodeProperties node_props_;
 
   const hsa_profile_t profile_ = HSA_PROFILE_BASE;

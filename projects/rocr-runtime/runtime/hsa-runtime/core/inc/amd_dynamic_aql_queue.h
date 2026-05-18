@@ -59,8 +59,6 @@ class DynamicAqlQueue : public core::Queue,
   void ExecutePM4(uint32_t* cmd_data, size_t cmd_size_b, hsa_fence_scope_t acquireFence,
                   hsa_fence_scope_t releaseFence, hsa_signal_t* signal) override;
 
-  void* driver_data() const { return driver_data_; }
-
  protected:
   bool _IsA(Queue::rtti_t id) const override { return id == &rtti_id(); }
 
@@ -76,7 +74,6 @@ class DynamicAqlQueue : public core::Queue,
   uint32_t queue_size_bytes_ = 0;
   void* ring_buf_ = nullptr;
   std::atomic<bool> active_ = false;
-  void* driver_data_ = nullptr;
 };
 
 } // namespace AMD

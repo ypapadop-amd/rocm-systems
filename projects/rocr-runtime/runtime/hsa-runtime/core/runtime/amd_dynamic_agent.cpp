@@ -10,7 +10,6 @@
 #include <cstring>
 #include <string_view>
 
-#include "core/inc/amd_dynamic_driver.h"
 #include "core/inc/amd_dynamic_aql_queue.h"
 #include "core/inc/amd_memory_region.h"
 #include "core/inc/driver.h"
@@ -20,22 +19,16 @@
 namespace rocr {
 namespace AMD {
 
-DynamicAgent::DynamicAgent(uint32_t node, const HsaNodeProperties& node_props,
-                           void* driver_data)
+DynamicAgent::DynamicAgent(uint32_t node, const HsaNodeProperties& node_props)
     : core::Agent(
           core::Runtime::runtime_singleton_->AgentDriver(core::DriverType::DYNAMIC),
           node, core::Agent::DeviceType::kDynamicDevice),
-      driver_data_(driver_data),
       node_props_(node_props) {
   InitRegionList();
   InitAllocators();
 }
 
 DynamicAgent::~DynamicAgent() {
-  if (driver_data_) {
-    static_cast<DynamicDriver&>(driver()).DestroyAgentData(driver_data_);
-    driver_data_ = nullptr;
-  }
   regions_.clear();
 }
 

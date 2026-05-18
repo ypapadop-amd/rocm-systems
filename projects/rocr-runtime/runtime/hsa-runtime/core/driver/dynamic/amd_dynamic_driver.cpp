@@ -35,10 +35,8 @@ DynamicDriver::DynamicDriver(rocr_dynamic_driver_ftable_t* ftable,
       ctx_(ctx) {}
 
 DynamicDriver::~DynamicDriver() {
-  if (ftable_) {
-    ftable_->destroy_context(ctx_);
-    ftable_ = nullptr;
-  }
+  ftable_->destroy_context(ctx_);
+  ftable_ = nullptr;
 }
 
 hsa_status_t DynamicDriver::Init() {
@@ -74,12 +72,7 @@ hsa_status_t DynamicDriver::GetSystemProperties(HsaSystemProperties& sys_props) 
 hsa_status_t DynamicDriver::GetNodeProperties(HsaNodeProperties& node_props,
                                                uint32_t node_id) const {
   if (!ftable_->get_node_properties) return HSA_STATUS_ERROR;
-  void* driver_data = nullptr;
-  auto status = ftable_->get_node_properties(ctx_, &node_props, node_id, &driver_data);
-  if (status == HSA_STATUS_SUCCESS && driver_data) {
-    cached_driver_data_[node_id] = driver_data;
-  }
-  return status;
+  return ftable_->get_node_properties(ctx_, &node_props, node_id);
 }
 
 hsa_status_t DynamicDriver::GetEdgeProperties(
@@ -154,14 +147,16 @@ hsa_status_t DynamicDriver::CreateQueue(
     HSA::hsa_amd_queue_priority_internal_t priority, uint32_t sdma_engine_id,
     void* queue_addr, uint64_t queue_size_bytes, uint64_t queue_metadata_size_bytes,
     HsaEvent* event, HsaQueueResource& queue_resource) const {
-  void* driver_data = nullptr;
-  return CreateQueueWithDriverData(node_id, type, queue_pct, priority, sdma_engine_id,
-                                    queue_addr, queue_size_bytes, queue_metadata_size_bytes,
-                                    event, queue_resource, &driver_data);
+  if (!ftable_->create_queue) return HSA_STATUS_ERROR;
+  return ftable_->create_queue(ctx_, node_id, static_cast<uint32_t>(type), queue_pct,
+                                static_cast<uint32_t>(priority), sdma_engine_id, queue_addr,
+                                queue_size_bytes, queue_metadata_size_bytes, event,
+                                &queue_resource);
 }
 
 hsa_status_t DynamicDriver::DestroyQueue(HSA_QUEUEID queue_id) const {
-  return DestroyQueueWithDriverData(queue_id, nullptr);
+  if (!ftable_->destroy_queue) return HSA_STATUS_ERROR;
+  return ftable_->destroy_queue(ctx_, queue_id);
 }
 
 hsa_status_t DynamicDriver::UpdateQueue(
@@ -332,38 +327,6 @@ hsa_status_t DynamicDriver::GetQueueSaveAreaInfo(HSA_QUEUEID queue_id, void** ad
                                                   size_t* size) const {
   if (!ftable_->get_queue_save_area_info) return HSA_STATUS_ERROR;
   return ftable_->get_queue_save_area_info(ctx_, queue_id, address, size);
-}
-
-void DynamicDriver::DestroyAgentData(void* driver_data) const {
-  if (ftable_->destroy_agent_data && driver_data) {
-    ftable_->destroy_agent_data(ctx_, driver_data);
-  }
-}
-
-void* DynamicDriver::GetCachedDriverData(uint32_t node_id) const {
-  auto it = cached_driver_data_.find(node_id);
-  if (it != cached_driver_data_.end()) {
-    return it->second;
-  }
-  return nullptr;
-}
-
-hsa_status_t DynamicDriver::CreateQueueWithDriverData(
-    uint32_t node_id, HSA_QUEUE_TYPE type, uint32_t queue_pct,
-    HSA::hsa_amd_queue_priority_internal_t priority, uint32_t sdma_engine_id,
-    void* queue_addr, uint64_t queue_size_bytes, uint64_t queue_metadata_size_bytes,
-    HsaEvent* event, HsaQueueResource& queue_resource, void** driver_data) const {
-  if (!ftable_->create_queue) return HSA_STATUS_ERROR;
-  return ftable_->create_queue(ctx_, node_id, static_cast<uint32_t>(type), queue_pct,
-                                static_cast<uint32_t>(priority), sdma_engine_id, queue_addr,
-                                queue_size_bytes, queue_metadata_size_bytes, event,
-                                &queue_resource, driver_data);
-}
-
-hsa_status_t DynamicDriver::DestroyQueueWithDriverData(HSA_QUEUEID queue_id,
-                                                        void* driver_data) const {
-  if (!ftable_->destroy_queue) return HSA_STATUS_ERROR;
-  return ftable_->destroy_queue(ctx_, queue_id, driver_data);
 }
 
 } // namespace AMD

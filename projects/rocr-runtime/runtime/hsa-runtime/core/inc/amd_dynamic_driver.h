@@ -8,7 +8,6 @@
 #define HSA_RUNTIME_CORE_INC_AMD_DYNAMIC_DRIVER_H_
 
 #include <memory>
-#include <unordered_map>
 
 #include "core/driver/dynamic/rocr_dynamic_driver.h"
 #include "core/inc/driver.h"
@@ -23,7 +22,6 @@ public:
   DynamicDriver(rocr_dynamic_driver_ftable_t* ftable, rocr_dynamic_driver_context_t* ctx);
   ~DynamicDriver();
 
-  // All core::Driver overrides
   hsa_status_t Init() override;
   hsa_status_t ShutDown() override;
   hsa_status_t QueryKernelModeDriver(core::DriverQuery query) override;
@@ -90,22 +88,9 @@ public:
   hsa_status_t GetQueueSaveAreaInfo(HSA_QUEUEID queue_id, void** address,
                                     size_t* size) const override;
 
-  void* GetCachedDriverData(uint32_t node_id) const;
-  void DestroyAgentData(void* driver_data) const;
-
-  hsa_status_t CreateQueueWithDriverData(uint32_t node_id, HSA_QUEUE_TYPE type, uint32_t queue_pct,
-                                         HSA::hsa_amd_queue_priority_internal_t priority,
-                                         uint32_t sdma_engine_id, void* queue_addr,
-                                         uint64_t queue_size_bytes,
-                                         uint64_t queue_metadata_size_bytes,
-                                         HsaEvent* event, HsaQueueResource& queue_resource,
-                                         void** driver_data) const;
-  hsa_status_t DestroyQueueWithDriverData(HSA_QUEUEID queue_id, void* driver_data) const;
-
 private:
   rocr_dynamic_driver_ftable_t* ftable_;
   rocr_dynamic_driver_context_t* ctx_;
-  mutable std::unordered_map<uint32_t, void*> cached_driver_data_;
 };
 
 } // namespace AMD

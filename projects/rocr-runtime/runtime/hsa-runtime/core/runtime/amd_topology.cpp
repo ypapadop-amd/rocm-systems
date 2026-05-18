@@ -220,9 +220,9 @@ void DiscoverAie(uint32_t node_id, HsaNodeProperties& node_prop) {
 #endif
 }
 
-void DiscoverDynamic(uint32_t node_id, HsaNodeProperties& node_prop, void* driver_data) {
+void DiscoverDynamic(uint32_t node_id, HsaNodeProperties& node_prop) {
 #if defined(__linux__)
-  DynamicAgent* agent = new DynamicAgent(node_id, node_prop, driver_data);
+  DynamicAgent* agent = new DynamicAgent(node_id, node_prop);
   core::Runtime::runtime_singleton_->RegisterAgent(agent, true);
 #endif
 }
@@ -423,8 +423,7 @@ bool BuildTopology() {
     uint32_t node_id = 0;
     for (auto& node_props : node_props_vec) {
       if (driver->kernel_driver_type_ == core::DriverType::DYNAMIC) {
-        auto& dyn_driver = static_cast<DynamicDriver&>(*driver);
-        DiscoverDynamic(node_id, node_props, dyn_driver.GetCachedDriverData(node_id));
+        DiscoverDynamic(node_id, node_props);
       } else if (node_props.NumCPUCores) {
         // Node has CPU cores so instantiate a CPU agent.
         DiscoverCpu(node_id, node_props, driver->kernel_driver_type_);
