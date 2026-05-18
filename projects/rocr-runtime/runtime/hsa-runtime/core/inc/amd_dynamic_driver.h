@@ -20,7 +20,7 @@ class DynamicDriver final : public core::Driver {
 public:
   static hsa_status_t DiscoverDriver(std::unique_ptr<core::Driver>& driver);
 
-  explicit DynamicDriver(rocr_dynamic_driver_ftable_t* ftable);
+  DynamicDriver(rocr_dynamic_driver_ftable_t* ftable, rocr_dynamic_driver_context_t* ctx);
   ~DynamicDriver();
 
   // All core::Driver overrides

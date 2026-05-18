@@ -26,24 +26,22 @@ typedef struct rocr_dynamic_driver_context_t rocr_dynamic_driver_context_t;
  * @brief Function table for a dynamically-loaded HSA driver.
  *
  * A shared library loaded via LD_PRELOAD exports a factory function
- * @c rocr_dynamic_driver_create that returns a pointer to this struct.
- * The HSA runtime discovers the factory with
+ * @c rocr_dynamic_driver_create that returns a pointer to this struct
+ * and an opaque context pointer via an out-parameter. The HSA runtime
+ * discovers the factory with
  * @c dlsym(RTLD_DEFAULT, "rocr_dynamic_driver_create") during topology
  * discovery and delegates all driver operations through these function
  * pointers.
  *
  * Every function pointer receives a @c rocr_dynamic_driver_context_t*
  * as its first argument. The implementer defines the context struct and
- * provides a pointer to it via the @c ctx member.
+ * provides a pointer to it via the @c rocr_dynamic_driver_create
+ * out-parameter.
  *
  * All function pointers are optional. When a pointer is NULL the runtime
  * returns @c HSA_STATUS_ERROR for that operation.
  */
 typedef struct rocr_dynamic_driver_ftable_t {
-  /** Opaque context owned by the driver implementation. Passed as the first
-   *  argument to every function pointer in this table. */
-  rocr_dynamic_driver_context_t* ctx;
-
   /** Device node name (e.g. "/dev/mydevice"). May be NULL. Used by the
    *  runtime's Driver base class for identification. */
   const char* devnode_name;

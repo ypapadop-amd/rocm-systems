@@ -15,21 +15,24 @@ namespace rocr {
 namespace AMD {
 
 hsa_status_t DynamicDriver::DiscoverDriver(std::unique_ptr<core::Driver>& driver) {
-  using CreateFn = rocr_dynamic_driver_ftable_t* (*)();
+  using CreateFn =
+      rocr_dynamic_driver_ftable_t* (*)(rocr_dynamic_driver_context_t**);
   auto create_fn = reinterpret_cast<CreateFn>(dlsym(RTLD_DEFAULT, "rocr_dynamic_driver_create"));
   if (!create_fn) return HSA_STATUS_ERROR;
 
-  auto* ftable = create_fn();
+  rocr_dynamic_driver_context_t* ctx = nullptr;
+  auto* ftable = create_fn(&ctx);
   if (!ftable) return HSA_STATUS_ERROR;
 
-  driver.reset(new DynamicDriver(ftable));
+  driver.reset(new DynamicDriver(ftable, ctx));
   return HSA_STATUS_SUCCESS;
 }
 
-DynamicDriver::DynamicDriver(rocr_dynamic_driver_ftable_t* ftable)
+DynamicDriver::DynamicDriver(rocr_dynamic_driver_ftable_t* ftable,
+                             rocr_dynamic_driver_context_t* ctx)
     : Driver(core::DriverType::DYNAMIC, ftable->devnode_name ? ftable->devnode_name : ""),
       ftable_(ftable),
-      ctx_(ftable->ctx) {}
+      ctx_(ctx) {}
 
 DynamicDriver::~DynamicDriver() {
   if (ftable_ && ftable_->destroy) {
