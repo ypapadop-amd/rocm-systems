@@ -14,6 +14,25 @@
 extern "C" {
 #endif
 
+/** Forward declaration for use in function pointer signatures. */
+typedef struct rocr_dynamic_driver_ftable_t rocr_dynamic_driver_ftable_t;
+
+/**
+ * @brief Context object for a dynamically-loaded HSA driver.
+ *
+ * Allocated and owned by the runtime (DynamicDriver). Passed as the first
+ * argument to every function pointer in @c rocr_dynamic_driver_ftable_t.
+ * The driver implementation stores its own state in @c driver_data.
+ */
+typedef struct rocr_dynamic_driver_context_t {
+  /** Back-pointer to the function table. */
+  rocr_dynamic_driver_ftable_t* ftable;
+
+  /** Opaque data owned by the driver implementation. Typically set during
+   *  @c init and freed during @c destroy. */
+  void* driver_data;
+} rocr_dynamic_driver_context_t;
+
 /**
  * @brief Function table for a dynamically-loaded HSA driver.
  *
@@ -24,19 +43,14 @@ extern "C" {
  * discovery and delegates all driver operations through these function
  * pointers.
  *
- * Every function pointer receives @c ctx as its first argument. The
- * implementer stores whatever state it needs behind that opaque pointer.
+ * Every function pointer receives a @c rocr_dynamic_driver_context_t*
+ * as its first argument. The implementer stores whatever state it needs
+ * in the context's @c driver_data field.
  *
- * All function pointers except @c destroy_agent_data, @c destroy, and
- * @c open_smi are required (must be non-NULL). @c open_smi and
- * @c destroy_agent_data may be NULL; the runtime falls back to default
- * behavior when they are.
+ * All function pointers are optional. When a pointer is NULL the runtime
+ * returns @c HSA_STATUS_ERROR for that operation.
  */
-typedef struct rocr_dynamic_driver_ftable_t {
-  /** Opaque context owned by the driver implementation. Passed as the first
-   *  argument to every function pointer in this table. */
-  void* ctx;
-
+struct rocr_dynamic_driver_ftable_t {
   /** Device node name (e.g. "/dev/mydevice"). May be NULL. Used by the
    *  runtime's Driver base class for identification. */
   const char* devnode_name;
@@ -48,28 +62,28 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in] ctx  Driver context.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*init)(void* ctx);
+  hsa_status_t (*init)(rocr_dynamic_driver_context_t* ctx);
 
   /**
    * @brief Shut down the driver, releasing any global resources.
    * @param[in] ctx  Driver context.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*shut_down)(void* ctx);
+  hsa_status_t (*shut_down)(rocr_dynamic_driver_context_t* ctx);
 
   /**
    * @brief Open the driver for use (called after init).
    * @param[in] ctx  Driver context.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*open)(void* ctx);
+  hsa_status_t (*open)(rocr_dynamic_driver_context_t* ctx);
 
   /**
    * @brief Close the driver (called before shut_down).
    * @param[in] ctx  Driver context.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*close)(void* ctx);
+  hsa_status_t (*close)(rocr_dynamic_driver_context_t* ctx);
 
   /**
    * @brief Query the kernel-mode driver for version or capability info.
@@ -77,7 +91,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in] query  Query identifier (cast of @c core::DriverQuery).
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*query_kernel_mode_driver)(void* ctx, int query);
+  hsa_status_t (*query_kernel_mode_driver)(rocr_dynamic_driver_context_t* ctx, int query);
 
   /* ---- Topology --------------------------------------------------------- */
 
@@ -87,7 +101,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[out] sys_props  Filled with system properties.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*get_system_properties)(void* ctx, HsaSystemProperties* sys_props);
+  hsa_status_t (*get_system_properties)(rocr_dynamic_driver_context_t* ctx, HsaSystemProperties* sys_props);
 
   /**
    * @brief Retrieve properties for a single topology node.
@@ -100,7 +114,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    *                          be set to NULL if not needed.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*get_node_properties)(void* ctx, HsaNodeProperties* node_props,
+  hsa_status_t (*get_node_properties)(rocr_dynamic_driver_context_t* ctx, HsaNodeProperties* node_props,
                                       uint32_t node_id, void** driver_data);
 
   /**
@@ -118,7 +132,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in]     node_id        Topology node index.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*get_edge_properties)(void* ctx, HsaIoLinkProperties* io_link_props,
+  hsa_status_t (*get_edge_properties)(rocr_dynamic_driver_context_t* ctx, HsaIoLinkProperties* io_link_props,
                                       uint32_t* num_links, uint32_t node_id);
 
   /**
@@ -134,7 +148,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in,out] num_props  Number of memory regions.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*get_memory_properties)(void* ctx, uint32_t node_id,
+  hsa_status_t (*get_memory_properties)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id,
                                         HsaMemoryProperties* mem_props, uint32_t* num_props);
 
   /**
@@ -151,7 +165,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in,out] num_props     Number of cache levels.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*get_cache_properties)(void* ctx, uint32_t node_id, uint32_t processor_id,
+  hsa_status_t (*get_cache_properties)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, uint32_t processor_id,
                                        HsaCacheProperties* cache_props, uint32_t* num_props);
 
   /* ---- Memory ----------------------------------------------------------- */
@@ -168,7 +182,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[out] mem          Pointer to the allocated memory.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*allocate_memory)(void* ctx, uint32_t node_id, size_t size,
+  hsa_status_t (*allocate_memory)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, size_t size,
                                   uint32_t alloc_flags, HsaMemFlags mem_flags,
                                   HsaMemoryProperties mem_props, void** mem);
 
@@ -179,7 +193,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in] size  Size of the allocation.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*free_memory)(void* ctx, void* mem, size_t size);
+  hsa_status_t (*free_memory)(rocr_dynamic_driver_context_t* ctx, void* mem, size_t size);
 
   /**
    * @brief Allocate scratch memory for a node.
@@ -189,7 +203,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[out] mem      Pointer to the allocated scratch memory.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*allocate_scratch_memory)(void* ctx, uint32_t node_id, uint64_t size, void** mem);
+  hsa_status_t (*allocate_scratch_memory)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, uint64_t size, void** mem);
 
   /**
    * @brief Query the amount of available (free) memory on a node.
@@ -198,7 +212,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[out] available_size  Available memory in bytes.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*available_memory)(void* ctx, uint32_t node_id, uint64_t* available_size);
+  hsa_status_t (*available_memory)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, uint64_t* available_size);
 
   /**
    * @brief Register host memory with the driver so it can be accessed by
@@ -209,7 +223,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in] mem_flags  Memory flags.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*register_memory)(void* ctx, void* ptr, uint64_t size, HsaMemFlags mem_flags);
+  hsa_status_t (*register_memory)(rocr_dynamic_driver_context_t* ctx, void* ptr, uint64_t size, HsaMemFlags mem_flags);
 
   /**
    * @brief Deregister previously registered host memory.
@@ -217,7 +231,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in] ptr  Pointer previously passed to @c register_memory.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*deregister_memory)(void* ctx, void* ptr);
+  hsa_status_t (*deregister_memory)(rocr_dynamic_driver_context_t* ctx, void* ptr);
 
   /**
    * @brief Pin memory so it remains resident in device-accessible space.
@@ -232,7 +246,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    *                           access the memory.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*make_memory_resident)(void* ctx, const void* mem, size_t size,
+  hsa_status_t (*make_memory_resident)(rocr_dynamic_driver_context_t* ctx, const void* mem, size_t size,
                                        uint64_t* alternate_va, const HsaMemMapFlags* mem_flags,
                                        uint32_t num_nodes, const uint32_t* nodes);
 
@@ -242,7 +256,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in] mem  Pointer previously passed to @c make_memory_resident.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*make_memory_unresident)(void* ctx, const void* mem);
+  hsa_status_t (*make_memory_unresident)(rocr_dynamic_driver_context_t* ctx, const void* mem);
 
   /* ---- DMA-buf / Sharing ------------------------------------------------ */
 
@@ -255,7 +269,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[out] offset     Offset within the DMA-buf where the data starts.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*export_dmabuf)(void* ctx, void* mem, size_t size, int* dmabuf_fd, size_t* offset);
+  hsa_status_t (*export_dmabuf)(rocr_dynamic_driver_context_t* ctx, void* mem, size_t size, int* dmabuf_fd, size_t* offset);
 
   /**
    * @brief Import a DMA-buf file descriptor for use by a node.
@@ -267,7 +281,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    *                        NULL).
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*import_dmabuf)(void* ctx, int dmabuf_fd, uint32_t node_id,
+  hsa_status_t (*import_dmabuf)(rocr_dynamic_driver_context_t* ctx, int dmabuf_fd, uint32_t node_id,
                                 uint64_t* handle, void* mem);
 
   /**
@@ -276,7 +290,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in,out] handle  Handle to destroy; set to 0 on success.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*destroy_imported_shareable_handle)(void* ctx, uint64_t* handle);
+  hsa_status_t (*destroy_imported_shareable_handle)(rocr_dynamic_driver_context_t* ctx, uint64_t* handle);
 
   /**
    * @brief Map a shared memory region into the caller's address space.
@@ -290,7 +304,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    *                    @c hsa_access_permission_t).
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*map)(void* ctx, uint64_t handle, void* mem, size_t offset, size_t size, int perms);
+  hsa_status_t (*map)(rocr_dynamic_driver_context_t* ctx, uint64_t handle, void* mem, size_t offset, size_t size, int perms);
 
   /**
    * @brief Unmap a previously mapped shared memory region.
@@ -301,7 +315,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in] size    Number of bytes to unmap.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*unmap)(void* ctx, uint64_t handle, void* mem, size_t offset, size_t size);
+  hsa_status_t (*unmap)(rocr_dynamic_driver_context_t* ctx, uint64_t handle, void* mem, size_t offset, size_t size);
 
   /**
    * @brief Create a shareable handle for an existing memory allocation.
@@ -320,7 +334,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[out] drm_fd_offset   Offset within the DRM object.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*create_shareable_handle)(void* ctx, void* va, void* mem, size_t size,
+  hsa_status_t (*create_shareable_handle)(rocr_dynamic_driver_context_t* ctx, void* va, void* mem, size_t size,
                                           uint32_t node_id, uint64_t* handle, uint64_t* offset,
                                           int* drm_fd, uint64_t* drm_fd_offset);
 
@@ -330,7 +344,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in,out] handle  Handle to destroy; set to 0 on success.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*destroy_shareable_handle)(void* ctx, uint64_t* handle);
+  hsa_status_t (*destroy_shareable_handle)(rocr_dynamic_driver_context_t* ctx, uint64_t* handle);
 
   /* ---- Queue ------------------------------------------------------------ */
 
@@ -359,7 +373,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    *                                       @c destroy_queue.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*create_queue)(void* ctx, uint32_t node_id, uint32_t type, uint32_t queue_pct,
+  hsa_status_t (*create_queue)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, uint32_t type, uint32_t queue_pct,
                                 uint32_t priority, uint32_t sdma_engine_id, void* queue_addr,
                                 uint64_t queue_size_bytes, uint64_t queue_metadata_size_bytes,
                                 HsaEvent* event, HsaQueueResource* queue_resource,
@@ -373,7 +387,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in] driver_data  Per-queue data returned by @c create_queue.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*destroy_queue)(void* ctx, uint64_t queue_id, void* driver_data);
+  hsa_status_t (*destroy_queue)(rocr_dynamic_driver_context_t* ctx, uint64_t queue_id, void* driver_data);
 
   /**
    * @brief Update queue parameters (priority, size, event) on a live queue.
@@ -387,7 +401,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in] event            New error event, or NULL.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*update_queue)(void* ctx, uint64_t queue_id, uint32_t queue_pct,
+  hsa_status_t (*update_queue)(rocr_dynamic_driver_context_t* ctx, uint64_t queue_id, uint32_t queue_pct,
                                 uint32_t priority, void* queue_addr,
                                 uint64_t queue_size_bytes, HsaEvent* event);
 
@@ -400,7 +414,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in] queue_cu_mask  Bitmask of enabled compute units.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*set_queue_cu_mask)(void* ctx, uint64_t queue_id, uint32_t cu_mask_count,
+  hsa_status_t (*set_queue_cu_mask)(rocr_dynamic_driver_context_t* ctx, uint64_t queue_id, uint32_t cu_mask_count,
                                     uint32_t* queue_cu_mask);
 
   /**
@@ -411,7 +425,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[out] first_gws  Index of the first allocated GWS slot.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*alloc_queue_gws)(void* ctx, uint64_t queue_id, uint32_t num_gws,
+  hsa_status_t (*alloc_queue_gws)(rocr_dynamic_driver_context_t* ctx, uint64_t queue_id, uint32_t num_gws,
                                    uint32_t* first_gws);
 
   /**
@@ -423,7 +437,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[out] size      Size of the save area in bytes.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*get_queue_save_area_info)(void* ctx, uint64_t queue_id,
+  hsa_status_t (*get_queue_save_area_info)(rocr_dynamic_driver_context_t* ctx, uint64_t queue_id,
                                             void** address, size_t* size);
 
   /* ---- Performance / Misc ----------------------------------------------- */
@@ -434,7 +448,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in] preferred_node_id  Node from which to acquire SPM.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*spm_acquire)(void* ctx, uint32_t preferred_node_id);
+  hsa_status_t (*spm_acquire)(rocr_dynamic_driver_context_t* ctx, uint32_t preferred_node_id);
 
   /**
    * @brief Release the SPM previously acquired with @c spm_acquire.
@@ -442,7 +456,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in] preferred_node_id  Node whose SPM to release.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*spm_release)(void* ctx, uint32_t preferred_node_id);
+  hsa_status_t (*spm_release)(rocr_dynamic_driver_context_t* ctx, uint32_t preferred_node_id);
 
   /**
    * @brief Configure the SPM destination buffer and retrieve sampled data.
@@ -457,7 +471,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    *                                   buffer overflow.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*spm_set_dest_buffer)(void* ctx, uint32_t preferred_node_id, uint32_t size_bytes,
+  hsa_status_t (*spm_set_dest_buffer)(rocr_dynamic_driver_context_t* ctx, uint32_t preferred_node_id, uint32_t size_bytes,
                                       uint32_t* timeout, uint32_t* size_copied,
                                       void* dest_mem_addr, bool* is_spm_data_loss);
 
@@ -472,7 +486,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[out] fd       File descriptor for SMI events.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*open_smi)(void* ctx, uint32_t node_id, int* fd);
+  hsa_status_t (*open_smi)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, int* fd);
 
   /**
    * @brief Install a trap handler for a node.
@@ -484,7 +498,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in] buffer_base_size Size of the data buffer in bytes.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*set_trap_handler)(void* ctx, uint32_t node_id, const void* base,
+  hsa_status_t (*set_trap_handler)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, const void* base,
                                     uint64_t base_size, const void* buffer_base,
                                     uint64_t buffer_base_size);
 
@@ -495,7 +509,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[out] device_handle  Opaque device handle.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*get_device_handle)(void* ctx, uint32_t node_id, void** device_handle);
+  hsa_status_t (*get_device_handle)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, void** device_handle);
 
   /**
    * @brief Read hardware clock counters for a node.
@@ -504,7 +518,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[out] clock_counter  Filled with GPU and CPU clock values.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*get_clock_counters)(void* ctx, uint32_t node_id,
+  hsa_status_t (*get_clock_counters)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id,
                                      HsaClockCounters* clock_counter);
 
   /**
@@ -514,7 +528,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[out] config   Filled with tile/pipe configuration.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*get_tile_config)(void* ctx, uint32_t node_id, HsaGpuTileConfig* config);
+  hsa_status_t (*get_tile_config)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, HsaGpuTileConfig* config);
 
   /**
    * @brief Check whether the driver's device model is enabled.
@@ -522,7 +536,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[out] enable  True if the model is enabled.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*is_model_enabled)(void* ctx, bool* enable);
+  hsa_status_t (*is_model_enabled)(rocr_dynamic_driver_context_t* ctx, bool* enable);
 
   /**
    * @brief Get the wall-clock frequency for a node (in Hz).
@@ -531,7 +545,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[out] frequency  Clock frequency in Hz.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*get_wallclock_frequency)(void* ctx, uint32_t node_id, uint64_t* frequency);
+  hsa_status_t (*get_wallclock_frequency)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, uint64_t* frequency);
 
   /* ---- Cleanup ---------------------------------------------------------- */
 
@@ -545,7 +559,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in] ctx          Driver context.
    * @param[in] driver_data  Per-agent data to free.
    */
-  void (*destroy_agent_data)(void* ctx, void* driver_data);
+  void (*destroy_agent_data)(rocr_dynamic_driver_context_t* ctx, void* driver_data);
 
   /**
    * @brief Destroy the driver context itself.
@@ -555,8 +569,8 @@ typedef struct rocr_dynamic_driver_ftable_t {
    *
    * @param[in] ctx  Driver context to destroy.
    */
-  void (*destroy)(void* ctx);
-} rocr_dynamic_driver_ftable_t;
+  void (*destroy)(rocr_dynamic_driver_context_t* ctx);
+};
 
 #ifdef __cplusplus
 }

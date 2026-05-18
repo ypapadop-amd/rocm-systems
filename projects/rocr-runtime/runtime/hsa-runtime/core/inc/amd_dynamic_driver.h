@@ -104,6 +104,7 @@ public:
 
 private:
   rocr_dynamic_driver_ftable_t* ftable_;
+  rocr_dynamic_driver_context_t* ctx_;
   mutable std::unordered_map<uint32_t, void*> cached_driver_data_;
 };
 
