@@ -14,20 +14,13 @@
 extern "C" {
 #endif
 
-/** Forward declaration for use in function pointer signatures. */
-typedef struct rocr_dynamic_driver_ftable_t rocr_dynamic_driver_ftable_t;
-
 /**
- * @brief Context object for a dynamically-loaded HSA driver.
+ * @brief Opaque context for a dynamically-loaded HSA driver.
  *
- * Allocated and owned by the runtime (DynamicDriver). Passed as the first
+ * Defined and allocated by the driver implementation. Passed as the first
  * argument to every function pointer in @c rocr_dynamic_driver_ftable_t.
- * The driver implementation stores its own state in @c driver_data.
  */
-typedef struct rocr_dynamic_driver_context_t {
-  /** Back-pointer to the function table. */
-  rocr_dynamic_driver_ftable_t* ftable;
-} rocr_dynamic_driver_context_t;
+typedef struct rocr_dynamic_driver_context_t rocr_dynamic_driver_context_t;
 
 /**
  * @brief Function table for a dynamically-loaded HSA driver.
@@ -40,13 +33,17 @@ typedef struct rocr_dynamic_driver_context_t {
  * pointers.
  *
  * Every function pointer receives a @c rocr_dynamic_driver_context_t*
- * as its first argument. The implementer stores whatever state it needs
- * in the context's @c driver_data field.
+ * as its first argument. The implementer defines the context struct and
+ * provides a pointer to it via the @c ctx member.
  *
  * All function pointers are optional. When a pointer is NULL the runtime
  * returns @c HSA_STATUS_ERROR for that operation.
  */
-struct rocr_dynamic_driver_ftable_t {
+typedef struct rocr_dynamic_driver_ftable_t {
+  /** Opaque context owned by the driver implementation. Passed as the first
+   *  argument to every function pointer in this table. */
+  rocr_dynamic_driver_context_t* ctx;
+
   /** Device node name (e.g. "/dev/mydevice"). May be NULL. Used by the
    *  runtime's Driver base class for identification. */
   const char* devnode_name;
@@ -566,7 +563,7 @@ struct rocr_dynamic_driver_ftable_t {
    * @param[in] ctx  Driver context to destroy.
    */
   void (*destroy)(rocr_dynamic_driver_context_t* ctx);
-};
+} rocr_dynamic_driver_ftable_t;
 
 #ifdef __cplusplus
 }
