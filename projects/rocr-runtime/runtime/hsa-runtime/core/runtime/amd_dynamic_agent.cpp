@@ -7,6 +7,7 @@
 #include "core/inc/amd_dynamic_agent.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cstring>
 #include <string_view>
 
@@ -43,6 +44,19 @@ hsa_status_t DynamicAgent::IterateRegion(
     }
   }
   return HSA_STATUS_SUCCESS;
+}
+
+hsa_status_t DynamicAgent::VisitRegion(bool include_peer,
+                                       hsa_status_t (*callback)(hsa_region_t region, void* data),
+                                       void* data) const {
+  // A dynamic agent owns no peer regions, so peer inclusion changes nothing.
+  return IterateRegion(callback, data);
+}
+
+core::Agent* DynamicAgent::GetNearestCpuAgent() const {
+  // Mirrors AieAgent: dynamic agents are associated with the first CPU agent.
+  assert(!core::Runtime::runtime_singleton_->cpu_agents().empty());
+  return core::Runtime::runtime_singleton_->cpu_agents()[0];
 }
 
 hsa_status_t DynamicAgent::IterateCache(

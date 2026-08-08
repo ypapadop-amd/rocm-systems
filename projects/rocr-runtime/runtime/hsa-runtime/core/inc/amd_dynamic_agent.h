@@ -21,6 +21,12 @@ public:
   hsa_status_t IterateRegion(hsa_status_t (*callback)(hsa_region_t region, void* data),
                              void* data) const override;
 
+  hsa_status_t VisitRegion(bool include_peer,
+                           hsa_status_t (*callback)(hsa_region_t region, void* data),
+                           void* data) const override;
+
+  core::Agent* GetNearestCpuAgent() const override;
+
   hsa_status_t IterateCache(hsa_status_t (*callback)(hsa_cache_t cache, void* data),
                             void* data) const override;
 
@@ -53,6 +59,7 @@ private:
   void InitAllocators();
 
   std::vector<std::shared_ptr<const core::MemoryRegion>> regions_;
+  std::vector<const core::Isa*> supported_isas_;
   std::function<void*(size_t, size_t, core::MemoryRegion::AllocateFlags)> system_allocator_;
   std::function<void(void*)> system_deallocator_;
 

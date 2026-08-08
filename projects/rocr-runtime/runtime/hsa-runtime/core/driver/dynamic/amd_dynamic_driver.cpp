@@ -20,6 +20,7 @@ namespace {
 rocr_dynamic_driver_memory_handle_t ToFtableHandle(const core::DriverMemoryHandle& handle) {
   rocr_dynamic_driver_memory_handle_t out{};
   out.handle = handle.handle;
+  out.vaddr = handle.vaddr;
   out.dmabuf_fd = handle.dmabuf_fd;
   out.mmap_offset = handle.mmap_offset;
   out.size = handle.size;
@@ -31,6 +32,7 @@ rocr_dynamic_driver_memory_handle_t ToFtableHandle(const core::DriverMemoryHandl
 void FromFtableHandle(const rocr_dynamic_driver_memory_handle_t& in,
                       core::DriverMemoryHandle* handle) {
   handle->handle = in.handle;
+  handle->vaddr = in.vaddr;
   handle->dmabuf_fd = in.dmabuf_fd;
   handle->mmap_offset = in.mmap_offset;
   handle->size = in.size;
@@ -152,19 +154,29 @@ hsa_status_t DynamicDriver::GetCacheProperties(
 }
 
 hsa_status_t DynamicDriver::AllocateMemory(const core::MemoryRegion& mem_region,
-                                            core::MemoryRegion::AllocateFlags alloc_flags,
-                                            void** mem, size_t size, uint32_t node_id) {
+                                           core::MemoryRegion::AllocateFlags alloc_flags,
+                                           size_t size, uint32_t node_id,
+                                           core::DriverMemoryHandle* handle) {
   if (!ftable_->allocate_memory) return HSA_STATUS_ERROR;
-  auto& amd_region = static_cast<const AMD::MemoryRegion&>(mem_region);
-  return ftable_->allocate_memory(ctx_, node_id, size,
-                                  static_cast<uint32_t>(alloc_flags),
-                                  amd_region.mem_flags(), amd_region.mem_props(),
-                                  mem);
+  const auto& amd_region = static_cast<const AMD::MemoryRegion&>(mem_region);
+
+  void* mem = nullptr;
+  const hsa_status_t status = ftable_->allocate_memory(
+      ctx_, node_id, size, static_cast<uint32_t>(alloc_flags), amd_region.mem_flags(),
+      amd_region.mem_props(), &mem);
+  if (status != HSA_STATUS_SUCCESS) return status;
+
+  // Mirrors KfdDriver: the allocation address is both the native id and the
+  // mapping. Export-only fields stay default and are filled lazily on export.
+  handle->handle = reinterpret_cast<uint64_t>(mem);
+  handle->vaddr = mem;
+  handle->size = size;
+  return HSA_STATUS_SUCCESS;
 }
 
-hsa_status_t DynamicDriver::FreeMemory(void* mem, size_t size) {
+hsa_status_t DynamicDriver::FreeMemory(const core::DriverMemoryHandle& handle) {
   if (!ftable_->free_memory) return HSA_STATUS_ERROR;
-  return ftable_->free_memory(ctx_, mem, size);
+  return ftable_->free_memory(ctx_, reinterpret_cast<void*>(handle.handle), handle.size);
 }
 
 hsa_status_t DynamicDriver::CreateQueue(
@@ -245,16 +257,16 @@ hsa_status_t DynamicDriver::Unmap(const core::DriverMemoryHandle& handle, void* 
   return ftable_->unmap(ctx_, node_id, &ft_handle, mem, offset, size);
 }
 
-hsa_status_t DynamicDriver::CreateShareableHandle(void* va, void* mem, size_t size,
+hsa_status_t DynamicDriver::CreateShareableHandle(core::DriverMemoryHandle* handle,
                                                     const core::Agent& agent,
-                                                    core::DriverMemoryHandle* handle,
                                                     uint64_t* offset) {
   if (!ftable_->create_shareable_handle) return HSA_STATUS_ERROR;
   if (handle == nullptr) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
 
   auto ft_handle = ToFtableHandle(*handle);
-  hsa_status_t status = ftable_->create_shareable_handle(ctx_, va, mem, size, agent.node_id(),
-                                                         &ft_handle, offset);
+  hsa_status_t status = ftable_->create_shareable_handle(
+      ctx_, handle->vaddr, reinterpret_cast<void*>(handle->handle), handle->size,
+      agent.node_id(), &ft_handle, offset);
   if (status != HSA_STATUS_SUCCESS) return status;
   FromFtableHandle(ft_handle, handle);
   return HSA_STATUS_SUCCESS;
@@ -358,7 +370,7 @@ hsa_status_t DynamicDriver::DeregisterMemory(void* ptr) const {
 
 hsa_status_t DynamicDriver::MakeMemoryResident(const void* mem, size_t size,
                                                 uint64_t* alternate_va,
-                                                const HsaMemMapFlags* mem_flags,
+                                                const HsaMemFlags* mem_flags,
                                                 uint32_t num_nodes,
                                                 const uint32_t* nodes) const {
   if (!ftable_->make_memory_resident) return HSA_STATUS_ERROR;
@@ -375,6 +387,13 @@ hsa_status_t DynamicDriver::GetQueueSaveAreaInfo(HSA_QUEUEID queue_id, void** ad
                                                   size_t* size) const {
   if (!ftable_->get_queue_save_area_info) return HSA_STATUS_ERROR;
   return ftable_->get_queue_save_area_info(ctx_, queue_id, address, size);
+}
+
+hsa_status_t DynamicDriver::CheckAcceleratorReadiness(core::Agent& agent, bool* ready) const {
+  // Mirrors XdnaDriver: this driver does not support the readiness query.
+  (void)agent;
+  (void)ready;
+  return HSA_STATUS_ERROR;
 }
 
 } // namespace AMD

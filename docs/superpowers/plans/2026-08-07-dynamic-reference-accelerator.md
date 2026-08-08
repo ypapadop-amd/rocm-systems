@@ -35,7 +35,8 @@ The dynamic suite is a **standalone** CMake project (`rocrtst/suites/dynamic/CMa
 ```bash
 # One-time, and again after any ROCr-side change (Tasks 1-3):
 cmake -S projects/rocr-runtime -B /tmp/rocr-build \
-      -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=/tmp/rocr-install
+      -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=/tmp/rocr-install \
+      -DCMAKE_PREFIX_PATH=/opt/rocm
 cmake --build /tmp/rocr-build -j"$(nproc)"
 cmake --install /tmp/rocr-build
 
@@ -46,7 +47,34 @@ cmake --build /tmp/dynaccel-build -j"$(nproc)"
 ctest --test-dir /tmp/dynaccel-build --output-on-failure
 ```
 
-**These commands are unverified** — there is no build tree in the workspace and I have not run them. If ROCr's top-level CMake needs extra options (it wraps `add_subdirectory` in a helper at `CMakeLists.txt:70-84`), fix the invocation in Task 1 and correct this section as part of that task's commit.
+`-DCMAKE_PREFIX_PATH=/opt/rocm` is required: without it, `find_package(LLVM)` resolves to the
+system LLVM (e.g. Ubuntu's `/usr/lib/llvm-20`), which lacks gfx1250 target support and fails
+with `clang-20: error: invalid target ID 'gfx1250'`. With the ROCm prefix, `LLVM_DIR` resolves
+to `/opt/rocm/llvm/lib/cmake/llvm` (AMD clang, ROCm-provided), which supports it.
+
+Even with that fix, the full `hsa-runtime64` (and therefore top-level `all`) target does not
+build clean on this host: `core/runtime/trap_handler/trap_handler_gfx12.s:1361` fails to
+assemble (`s_setreg_b32 hwreg(HW_REG_WAVE_SCHED_MODE, 0, 2), ttmp2` — "expected a register name
+or an absolute expression"). This is a pre-existing assembler/toolchain compatibility issue in
+the GCN trap handler, unrelated to the dynamic driver/agent files touched by Tasks 1-3; do not
+attempt to fix it as part of this plan.
+
+To verify Tasks 1-3's actual C++ changes without waiting on that unrelated blocker, build just
+the three dynamic-subsystem translation units directly via the generated Makefile, bypassing
+the trap-handler dependency:
+```bash
+gmake -C /tmp/rocr-build -f runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/build.make \
+  runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/core/driver/dynamic/amd_dynamic_driver.cpp.o \
+  runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/core/runtime/amd_dynamic_agent.cpp.o \
+  runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/core/runtime/amd_dynamic_aql_queue.cpp.o
+```
+A clean exit (object files produced, no `error:` in the output) is the acceptance bar for
+Tasks 1-3 until the trap-handler issue is resolved separately.
+
+**The test-suite commands remain unverified** — there is no installed ROCr and I have not run
+them. If ROCr's top-level CMake needs further options (it wraps `add_subdirectory` in a helper
+at `CMakeLists.txt:70-84`), fix the invocation in whichever task first needs a full install and
+correct this section as part of that task's commit.
 
 `/dev/udmabuf` on this host is `root:kvm`. If the executing user is not in `kvm`, the driver falls back to plain `mmap` and the dma-buf tests skip themselves — that is expected, not a failure.
 
@@ -187,10 +215,24 @@ Add `#include <cassert>` to the include block if not already present.
 Run:
 ```bash
 cmake -S projects/rocr-runtime -B /tmp/rocr-build \
-      -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=/tmp/rocr-install
+      -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=/tmp/rocr-install \
+      -DCMAKE_PREFIX_PATH=/opt/rocm
 cmake --build /tmp/rocr-build -j"$(nproc)" 2>&1 | tail -40
 ```
-Expected: builds clean. If the top-level CMake invocation needs different options, fix it and update the "Build and test commands" section of this plan in the same commit.
+`-DCMAKE_PREFIX_PATH=/opt/rocm` is required so `find_package(LLVM)` resolves to ROCm's clang
+instead of a system LLVM lacking newer GPU target support (see "Build and test commands" above
+for details). Even with that fix, the full build does not complete on this host: a pre-existing,
+unrelated assembler failure in `core/runtime/trap_handler/trap_handler_gfx12.s` blocks the
+`hsa-runtime64` target regardless of this task's changes. Do not attempt to fix it here.
+Verify this task's actual changes with the narrower command from "Build and test commands":
+```bash
+gmake -C /tmp/rocr-build -f runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/build.make \
+  runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/core/driver/dynamic/amd_dynamic_driver.cpp.o \
+  runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/core/runtime/amd_dynamic_agent.cpp.o \
+  runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/core/runtime/amd_dynamic_aql_queue.cpp.o
+```
+Expected: all three objects build with no `error:` output. This is the acceptance bar for this
+task; do not claim the full build is clean if it is not.
 
 - [ ] **Step 8: Commit**
 

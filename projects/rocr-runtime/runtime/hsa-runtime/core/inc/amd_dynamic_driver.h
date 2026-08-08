@@ -36,9 +36,9 @@ public:
   hsa_status_t GetCacheProperties(uint32_t node_id, uint32_t processor_id,
                                   std::vector<HsaCacheProperties>& cache_props) const override;
   hsa_status_t AllocateMemory(const core::MemoryRegion& mem_region,
-                              core::MemoryRegion::AllocateFlags alloc_flags,
-                              void** mem, size_t size, uint32_t node_id) override;
-  hsa_status_t FreeMemory(void* mem, size_t size) override;
+                              core::MemoryRegion::AllocateFlags alloc_flags, size_t size,
+                              uint32_t node_id, core::DriverMemoryHandle* handle) override;
+  hsa_status_t FreeMemory(const core::DriverMemoryHandle& handle) override;
   hsa_status_t CreateQueue(uint32_t node_id, HSA_QUEUE_TYPE type, uint32_t queue_pct,
                            HSA::hsa_amd_queue_priority_internal_t priority, uint32_t sdma_engine_id,
                            void* queue_addr, uint64_t queue_size_bytes,
@@ -61,8 +61,8 @@ public:
                    hsa_access_permission_t perms, uint32_t node_id) override;
   hsa_status_t Unmap(const core::DriverMemoryHandle& handle, void* mem, size_t offset, size_t size,
                      uint32_t node_id) override;
-  hsa_status_t CreateShareableHandle(void* va, void* mem, size_t size, const core::Agent& agent,
-                                     core::DriverMemoryHandle* handle, uint64_t* offset) override;
+  hsa_status_t CreateShareableHandle(core::DriverMemoryHandle* handle, const core::Agent& agent,
+                                     uint64_t* offset) override;
   hsa_status_t DestroyMemoryHandle(core::DriverMemoryHandle* handle) override;
   hsa_status_t SPMAcquire(uint32_t preferred_node_id) const override;
   hsa_status_t SPMRelease(uint32_t preferred_node_id) const override;
@@ -84,11 +84,12 @@ public:
   hsa_status_t RegisterMemory(void* ptr, uint64_t size, HsaMemFlags mem_flags) const override;
   hsa_status_t DeregisterMemory(void* ptr) const override;
   hsa_status_t MakeMemoryResident(const void* mem, size_t size, uint64_t* alternate_va,
-                                  const HsaMemMapFlags* mem_flags, uint32_t num_nodes,
+                                  const HsaMemFlags* mem_flags, uint32_t num_nodes,
                                   const uint32_t* nodes) const override;
   hsa_status_t MakeMemoryUnresident(const void* mem) const override;
   hsa_status_t GetQueueSaveAreaInfo(HSA_QUEUEID queue_id, void** address,
                                     size_t* size) const override;
+  hsa_status_t CheckAcceleratorReadiness(core::Agent& agent, bool* ready) const override;
 
 private:
   rocr_dynamic_driver_ftable_t* ftable_;

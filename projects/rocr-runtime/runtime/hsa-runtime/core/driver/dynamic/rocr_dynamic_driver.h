@@ -9,6 +9,7 @@
 
 #include "hsakmt/hsakmttypes.h"
 #include "inc/hsa.h"
+#include "inc/hsa_ext_amd.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -46,6 +47,9 @@ typedef enum rocr_dynamic_driver_share_type_t {
 typedef struct rocr_dynamic_driver_memory_handle_t {
   /** Driver-defined handle value (0 means invalid). */
   uint64_t handle;
+  /** Virtual address mapped by the driver for this allocation, or NULL if the
+   *  driver owns no mapping. When set, free_memory unmaps it. */
+  void* vaddr;
   /** DMA-buf file descriptor (-1 when unused). */
   int dmabuf_fd;
   /** Offset used for CPU mmap of the backing allocation. */
@@ -268,7 +272,7 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @return HSA_STATUS_SUCCESS on success.
    */
   hsa_status_t (*make_memory_resident)(rocr_dynamic_driver_context_t* ctx, const void* mem, size_t size,
-                                       uint64_t* alternate_va, const HsaMemMapFlags* mem_flags,
+                                       uint64_t* alternate_va, const HsaMemFlags* mem_flags,
                                        uint32_t num_nodes, const uint32_t* nodes);
 
   /**
