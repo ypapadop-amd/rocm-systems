@@ -7,6 +7,7 @@
 #ifndef HSA_RUNTIME_CORE_INC_AMD_DYNAMIC_AGENT_H_
 #define HSA_RUNTIME_CORE_INC_AMD_DYNAMIC_AGENT_H_
 
+#include "core/driver/dynamic/rocr_dynamic_driver.h"
 #include "core/inc/agent.h"
 #include "core/inc/runtime.h"
 
@@ -65,10 +66,7 @@ private:
 
   const HsaNodeProperties node_props_;
 
-  const hsa_profile_t profile_ = HSA_PROFILE_BASE;
-  const uint32_t min_aql_size_ = 0x40;
-  const uint32_t max_aql_size_ = 0x40;
-  const uint32_t max_queues_ = 1;
+  rocr_dynamic_driver_agent_props_t props_ = {};
 };
 
 } // namespace AMD

@@ -153,6 +153,12 @@ hsa_status_t DynamicDriver::GetCacheProperties(
   return HSA_STATUS_SUCCESS;
 }
 
+hsa_status_t DynamicDriver::GetAgentProperties(
+    uint32_t node_id, rocr_dynamic_driver_agent_props_t* props) const {
+  if (!ftable_->get_agent_properties) return HSA_STATUS_ERROR;
+  return ftable_->get_agent_properties(ctx_, node_id, props);
+}
+
 hsa_status_t DynamicDriver::AllocateMemory(const core::MemoryRegion& mem_region,
                                            core::MemoryRegion::AllocateFlags alloc_flags,
                                            size_t size, uint32_t node_id,

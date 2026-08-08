@@ -35,6 +35,8 @@ public:
                                    std::vector<HsaMemoryProperties>& mem_props) const override;
   hsa_status_t GetCacheProperties(uint32_t node_id, uint32_t processor_id,
                                   std::vector<HsaCacheProperties>& cache_props) const override;
+  hsa_status_t GetAgentProperties(uint32_t node_id,
+                                  rocr_dynamic_driver_agent_props_t* props) const;
   hsa_status_t AllocateMemory(const core::MemoryRegion& mem_region,
                               core::MemoryRegion::AllocateFlags alloc_flags, size_t size,
                               uint32_t node_id, core::DriverMemoryHandle* handle) override;

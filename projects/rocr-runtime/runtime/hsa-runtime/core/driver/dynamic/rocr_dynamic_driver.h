@@ -61,6 +61,37 @@ typedef struct rocr_dynamic_driver_memory_handle_t {
 } rocr_dynamic_driver_memory_handle_t;
 
 /**
+ * @brief Agent-level properties reported to the runtime.
+ *
+ * Filled once during agent construction and used to answer
+ * @c hsa_agent_get_info. Fields left zero keep the runtime's defaults.
+ */
+typedef struct rocr_dynamic_driver_agent_props_t {
+  char     name[64];
+  char     vendor_name[64];
+  char     product_name[64];
+  char     uuid[24];
+  uint32_t wavefront_size;
+  uint16_t workgroup_max_dim[3];
+  uint32_t workgroup_max_size;
+  uint32_t grid_max_dim[3];
+  uint32_t grid_max_size;
+  uint32_t compute_unit_count;
+  uint32_t max_clock_frequency;
+  uint32_t cacheline_size;
+  uint32_t cache_size[4];
+  uint32_t queue_min_size;
+  uint32_t queue_max_size;
+  uint32_t queues_max;
+  uint32_t bdfid;
+  uint32_t chip_id;
+  uint32_t asic_revision;
+  uint8_t  profile;                     /**< hsa_profile_t */
+  uint8_t  default_float_rounding_mode; /**< hsa_default_float_rounding_mode_t */
+  uint8_t  reserved[2];
+} rocr_dynamic_driver_agent_props_t;
+
+/**
  * @brief Function table for a dynamically-loaded HSA driver.
  *
  * A shared library loaded via LD_PRELOAD exports a factory function
@@ -192,6 +223,19 @@ typedef struct rocr_dynamic_driver_ftable_t {
    */
   hsa_status_t (*get_cache_properties)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, uint32_t processor_id,
                                        HsaCacheProperties* cache_props, uint32_t* num_props);
+
+  /**
+   * @brief Retrieve agent-level properties for a node.
+   *
+   * Optional. When NULL the runtime reports zeros for every attribute.
+   *
+   * @param[in]  ctx      Driver context.
+   * @param[in]  node_id  Topology node index.
+   * @param[out] props    Filled with the agent's properties.
+   * @return HSA_STATUS_SUCCESS on success.
+   */
+  hsa_status_t (*get_agent_properties)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id,
+                                       rocr_dynamic_driver_agent_props_t* props);
 
   /* ---- Memory ----------------------------------------------------------- */
 

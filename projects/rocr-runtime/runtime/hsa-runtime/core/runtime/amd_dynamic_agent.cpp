@@ -9,10 +9,13 @@
 #include <algorithm>
 #include <cassert>
 #include <cstring>
+#include <string>
 #include <string_view>
 
 #include "core/inc/amd_dynamic_aql_queue.h"
+#include "core/inc/amd_dynamic_driver.h"
 #include "core/inc/amd_memory_region.h"
+#include "core/inc/cache.h"
 #include "core/inc/driver.h"
 #include "core/inc/runtime.h"
 #include "core/util/os.h"
@@ -25,6 +28,14 @@ DynamicAgent::DynamicAgent(uint32_t node, const HsaNodeProperties& node_props)
           core::Runtime::runtime_singleton_->AgentDriver(core::DriverType::DYNAMIC),
           node, core::Agent::DeviceType::kDynamicDevice),
       node_props_(node_props) {
+  // Defaults if the driver does not implement get_agent_properties.
+  props_.queue_min_size = 0x40;
+  props_.queue_max_size = 0x40;
+  props_.queues_max = 1;
+  props_.profile = HSA_PROFILE_BASE;
+  props_.default_float_rounding_mode = HSA_DEFAULT_FLOAT_ROUNDING_MODE_NEAR;
+  static_cast<DynamicDriver&>(driver()).GetAgentProperties(node, &props_);
+
   InitRegionList();
   InitAllocators();
 }
@@ -61,7 +72,24 @@ core::Agent* DynamicAgent::GetNearestCpuAgent() const {
 
 hsa_status_t DynamicAgent::IterateCache(
     hsa_status_t (*callback)(hsa_cache_t cache, void* data), void* data) const {
-  return HSA_STATUS_ERROR_INVALID_CACHE;
+  std::vector<HsaCacheProperties> cache_props;
+  if (driver().GetCacheProperties(node_id(), 0, cache_props) != HSA_STATUS_SUCCESS ||
+      cache_props.empty()) {
+    return HSA_STATUS_ERROR_INVALID_CACHE;
+  }
+
+  // HsaCacheProperties has no name field; mirror GpuAgent::InitCacheList, which
+  // synthesizes the cache name from the device name and level.
+  const std::string device_name(reinterpret_cast<const char*>(node_props_.AMDName));
+
+  AMD::callback_t<decltype(callback)> call(callback);
+  for (const auto& props : cache_props) {
+    core::Cache cache(device_name + " L" + std::to_string(props.CacheLevel), props.CacheLevel,
+                      props.CacheSize);
+    hsa_status_t err = call(core::Cache::Convert(&cache), data);
+    if (err != HSA_STATUS_SUCCESS) return err;
+  }
+  return HSA_STATUS_SUCCESS;
 }
 
 hsa_status_t DynamicAgent::IterateSupportedIsas(
@@ -103,34 +131,34 @@ hsa_status_t DynamicAgent::GetInfo(hsa_agent_info_t attribute, void* value) cons
           HSA_DEFAULT_FLOAT_ROUNDING_MODE_NEAR;
       break;
     case HSA_AGENT_INFO_PROFILE:
-      *static_cast<hsa_profile_t*>(value) = profile_;
+      *static_cast<hsa_profile_t*>(value) = static_cast<hsa_profile_t>(props_.profile);
       break;
     case HSA_AGENT_INFO_WAVEFRONT_SIZE:
-      *static_cast<uint32_t*>(value) = 0;
+      *static_cast<uint32_t*>(value) = props_.wavefront_size;
       break;
     case HSA_AGENT_INFO_WORKGROUP_MAX_DIM:
-      std::memset(value, 0, sizeof(uint16_t) * 3);
+      std::memcpy(value, props_.workgroup_max_dim, sizeof(props_.workgroup_max_dim));
       break;
     case HSA_AGENT_INFO_WORKGROUP_MAX_SIZE:
-      *static_cast<uint32_t*>(value) = 0;
+      *static_cast<uint32_t*>(value) = props_.workgroup_max_size;
       break;
     case HSA_AGENT_INFO_GRID_MAX_DIM:
-      std::memset(value, 0, sizeof(uint16_t) * 3);
+      std::memcpy(value, props_.grid_max_dim, sizeof(props_.grid_max_dim));
       break;
     case HSA_AGENT_INFO_GRID_MAX_SIZE:
-      *static_cast<uint32_t*>(value) = 0;
+      *static_cast<uint32_t*>(value) = props_.grid_max_size;
       break;
     case HSA_AGENT_INFO_FBARRIER_MAX_SIZE:
       *static_cast<uint32_t*>(value) = 0;
       break;
     case HSA_AGENT_INFO_QUEUES_MAX:
-      *static_cast<uint32_t*>(value) = max_queues_;
+      *static_cast<uint32_t*>(value) = props_.queues_max;
       break;
     case HSA_AGENT_INFO_QUEUE_MIN_SIZE:
-      *static_cast<uint32_t*>(value) = min_aql_size_;
+      *static_cast<uint32_t*>(value) = props_.queue_min_size;
       break;
     case HSA_AGENT_INFO_QUEUE_MAX_SIZE:
-      *static_cast<uint32_t*>(value) = max_aql_size_;
+      *static_cast<uint32_t*>(value) = props_.queue_max_size;
       break;
     case HSA_AGENT_INFO_QUEUE_TYPE:
       *static_cast<hsa_queue_type32_t*>(value) = HSA_QUEUE_TYPE_SINGLE;
@@ -142,7 +170,7 @@ hsa_status_t DynamicAgent::GetInfo(hsa_agent_info_t attribute, void* value) cons
       *static_cast<hsa_device_type_t*>(value) = HSA_DEVICE_TYPE_DYNAMIC;
       break;
     case HSA_AGENT_INFO_CACHE_SIZE:
-      *static_cast<uint32_t*>(value) = 0;
+      std::memcpy(value, props_.cache_size, sizeof(props_.cache_size));
       break;
     case HSA_AGENT_INFO_VERSION_MAJOR:
       *static_cast<uint32_t*>(value) = 1;
@@ -151,16 +179,16 @@ hsa_status_t DynamicAgent::GetInfo(hsa_agent_info_t attribute, void* value) cons
       *static_cast<uint32_t*>(value) = 0;
       break;
     case HSA_AMD_AGENT_INFO_CHIP_ID:
-      *static_cast<uint32_t*>(value) = 0;
+      *static_cast<uint32_t*>(value) = props_.chip_id;
       break;
     case HSA_AMD_AGENT_INFO_CACHELINE_SIZE:
-      *static_cast<uint32_t*>(value) = 0;
+      *static_cast<uint32_t*>(value) = props_.cacheline_size;
       break;
     case HSA_AMD_AGENT_INFO_COMPUTE_UNIT_COUNT:
-      *static_cast<uint32_t*>(value) = 0;
+      *static_cast<uint32_t*>(value) = props_.compute_unit_count;
       break;
     case HSA_AMD_AGENT_INFO_MAX_CLOCK_FREQUENCY:
-      *static_cast<uint32_t*>(value) = 0;
+      *static_cast<uint32_t*>(value) = props_.max_clock_frequency;
       break;
     case HSA_AMD_AGENT_INFO_DRIVER_NODE_ID:
       *static_cast<uint32_t*>(value) = node_id();
@@ -169,7 +197,7 @@ hsa_status_t DynamicAgent::GetInfo(hsa_agent_info_t attribute, void* value) cons
       *static_cast<uint32_t*>(value) = 0;
       break;
     case HSA_AMD_AGENT_INFO_BDFID:
-      *static_cast<uint32_t*>(value) = 0;
+      *static_cast<uint32_t*>(value) = props_.bdfid;
       break;
     case HSA_AMD_AGENT_INFO_NUM_SIMDS_PER_CU:
       *static_cast<uint32_t*>(value) = 0;
@@ -195,14 +223,13 @@ hsa_status_t DynamicAgent::GetInfo(hsa_agent_info_t attribute, void* value) cons
       std::copy_n(node_props_.MarketingName, HSA_PUBLIC_NAME_SIZE, static_cast<char*>(value));
       break;
     case HSA_AMD_AGENT_INFO_UUID: {
-      constexpr std::string_view uuid = "DYN-XX";
       auto ptr = static_cast<char*>(value);
-      std::copy(uuid.begin(), uuid.end(), ptr);
-      *std::next(ptr, uuid.size()) = '\0';
+      std::strncpy(ptr, props_.uuid[0] ? props_.uuid : "DYN-XX", sizeof(props_.uuid));
+      ptr[sizeof(props_.uuid) - 1] = '\0';
       break;
     }
     case HSA_AMD_AGENT_INFO_ASIC_REVISION:
-      *static_cast<uint32_t*>(value) = 0;
+      *static_cast<uint32_t*>(value) = props_.asic_revision;
       break;
     case HSA_AMD_AGENT_INFO_SVM_DIRECT_HOST_ACCESS:
       assert(regions_.size() != 0 && "No device local memory found!");
@@ -238,7 +265,7 @@ hsa_status_t DynamicAgent::QueueCreate(size_t size, hsa_queue_type32_t queue_typ
     return HSA_STATUS_ERROR_INVALID_ARGUMENT;
   }
 
-  if (size < min_aql_size_ || size > max_aql_size_) {
+  if (size < props_.queue_min_size || size > props_.queue_max_size) {
     return HSA_STATUS_ERROR_INVALID_ARGUMENT;
   }
 
@@ -270,15 +297,16 @@ void DynamicAgent::InitRegionList() {
     sys_mem_props.SizeInBytes = total_system_memory;
 
     regions_.push_back(
-        std::make_shared<MemoryRegion>(false, true, false, false, true, this, sys_mem_props));
+        std::make_shared<MemoryRegion>(true, true, false, false, true, this, sys_mem_props));
   } else {
     regions_.reserve(mem_props_vec.size());
     bool first_system = true;
     for (const auto& props : mem_props_vec) {
       bool kernarg = first_system && (props.HeapType == HSA_HEAPTYPE_SYSTEM);
       if (kernarg) first_system = false;
-      regions_.push_back(
-          std::make_shared<MemoryRegion>(false, kernarg, false, false, true, this, props));
+      const bool fine_grain = (props.HeapType == HSA_HEAPTYPE_SYSTEM);
+      regions_.push_back(std::make_shared<MemoryRegion>(fine_grain, kernarg, false, false, true,
+                                                        this, props));
     }
   }
 }
