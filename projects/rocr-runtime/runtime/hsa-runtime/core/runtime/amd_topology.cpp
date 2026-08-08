@@ -423,33 +423,36 @@ bool BuildTopology() {
     uint32_t node_id = 0;
     for (auto& node_props : node_props_vec) {
       if (driver->kernel_driver_type_ == core::DriverType::DYNAMIC) {
+        // A dynamic driver describes its own devices; none of the KFD device
+        // classes below apply to its nodes.
         DiscoverDynamic(node_id, node_props);
-      } else if (node_props.NumCPUCores) {
-        // Node has CPU cores so instantiate a CPU agent.
-        DiscoverCpu(node_id, node_props, driver->kernel_driver_type_);
-      }
-
-      if (node_props.NumNeuralCores && driver->kernel_driver_type_ != core::DriverType::DYNAMIC) {
-        // Node has AIE cores so instantiate an AIE agent.
-        DiscoverAie(node_id, node_props);
-      }
-
-      // Current node is either a dGpu or Apu and might belong
-      // to user visible list. Process node if present in usr
-      // visible list, continue if not found
-      if (node_props.NumFComputeCores != 0 &&
-          driver->kernel_driver_type_ != core::DriverType::DYNAMIC) {
-        if (filter) {
-          int32_t devRank = rvdFilter.GetUsrDeviceRank(kfdIdx);
-          if (devRank != (-1)) {
-            gpu_usr_list[devRank] = node_id;
-          } else {
-            gpu_disabled.push_back(node_id);
-          }
-        } else {
-          gpu_usr_list.push_back(node_id);
+      } else {
+        if (node_props.NumCPUCores) {
+          // Node has CPU cores so instantiate a CPU agent.
+          DiscoverCpu(node_id, node_props, driver->kernel_driver_type_);
         }
-        kfdIdx++;
+
+        if (node_props.NumNeuralCores) {
+          // Node has AIE cores so instantiate an AIE agent.
+          DiscoverAie(node_id, node_props);
+        }
+
+        // Current node is either a dGpu or Apu and might belong
+        // to user visible list. Process node if present in usr
+        // visible list, continue if not found
+        if (node_props.NumFComputeCores != 0) {
+          if (filter) {
+            int32_t devRank = rvdFilter.GetUsrDeviceRank(kfdIdx);
+            if (devRank != (-1)) {
+              gpu_usr_list[devRank] = node_id;
+            } else {
+              gpu_disabled.push_back(node_id);
+            }
+          } else {
+            gpu_usr_list.push_back(node_id);
+          }
+          kfdIdx++;
+        }
       }
 
       // Register IO links of node without regard to

@@ -12,29 +12,9 @@
 #include "hsa/hsa.h"
 #include "hsa/hsa_ext_amd.h"
 
-namespace {
+#include "common.h"
 
-template <hsa_device_type_t DeviceType>
-hsa_status_t discover_agents(hsa_agent_t agent, void* data) {
-  if (!data) {
-    return HSA_STATUS_ERROR_INVALID_ARGUMENT;
-  }
-
-  hsa_device_type_t device_type = {};
-  const auto status = hsa_agent_get_info(agent, HSA_AGENT_INFO_DEVICE, &device_type);
-  if (status != HSA_STATUS_SUCCESS) {
-    return status;
-  }
-
-  if (device_type == DeviceType) {
-    auto* const agents = static_cast<std::vector<hsa_agent_t>*>(data);
-    agents->push_back(agent);
-  }
-
-  return HSA_STATUS_SUCCESS;
-}
-
-}  // namespace
+using rocrtst::discover_agents;
 
 TEST(Dispatch, NoDynamicDriver) {
   ASSERT_EQ(hsa_init(), HSA_STATUS_SUCCESS);

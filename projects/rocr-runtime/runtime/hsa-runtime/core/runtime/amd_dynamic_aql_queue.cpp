@@ -20,15 +20,16 @@ DynamicAqlQueue::DynamicAqlQueue(core::SharedQueue* shared_queue, DynamicAgent* 
                                  size_t req_size_pkts, uint32_t node_id, uint64_t flags)
     : Queue(shared_queue, flags, agent),
       LocalSignal(0, false),
-      DoorbellSignal(signal()),
-      queue_size_bytes_(req_size_pkts * sizeof(core::AqlPacket)) {
+      DoorbellSignal(signal()) {
   if (agent->device_type() != core::Agent::DeviceType::kDynamicDevice) {
     throw hsa_exception(HSA_STATUS_ERROR_INVALID_AGENT,
                         "Attempting to create a Dynamic queue on a non-Dynamic agent.");
   }
 
+  const uint32_t queue_size_bytes = req_size_pkts * sizeof(core::AqlPacket);
+
   ring_buf_ =
-      agent->system_allocator()(queue_size_bytes_, 4096, core::MemoryRegion::AllocateNoFlags);
+      agent->system_allocator()(queue_size_bytes, 4096, core::MemoryRegion::AllocateNoFlags);
   if (!ring_buf_) {
     throw hsa_exception(HSA_STATUS_ERROR_INVALID_QUEUE_CREATION,
                         "Could not allocate a ring buffer for a Dynamic queue.");
@@ -52,7 +53,7 @@ DynamicAqlQueue::DynamicAqlQueue(core::SharedQueue* shared_queue, DynamicAgent* 
   HsaQueueResource queue_resource = {};
   hsa_status_t status = agent->driver().CreateQueue(
       node_id, HSA_QUEUE_COMPUTE_AQL, 0, rocr::HSA::HSA_AMD_QUEUE_PRIORITY_NORMAL, 0, nullptr,
-      queue_size_bytes_, 0, nullptr, queue_resource);
+      queue_size_bytes, 0, nullptr, queue_resource);
   if (status != HSA_STATUS_SUCCESS) {
     throw hsa_exception(status, "Failed to create a hardware context for a Dynamic queue.");
   }

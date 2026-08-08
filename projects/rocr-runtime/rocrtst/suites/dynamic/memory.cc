@@ -11,27 +11,11 @@
 #include "hsa/hsa.h"
 #include "hsa/hsa_ext_amd.h"
 
+#include "common.h"
+
+using rocrtst::discover_agents;
+
 namespace {
-
-template <hsa_device_type_t DeviceType>
-hsa_status_t discover_agents(hsa_agent_t agent, void* data) {
-  if (!data) {
-    return HSA_STATUS_ERROR_INVALID_ARGUMENT;
-  }
-
-  hsa_device_type_t device_type = {};
-  const auto status = hsa_agent_get_info(agent, HSA_AGENT_INFO_DEVICE, &device_type);
-  if (status != HSA_STATUS_SUCCESS) {
-    return status;
-  }
-
-  if (device_type == DeviceType) {
-    auto* const agents = static_cast<std::vector<hsa_agent_t>*>(data);
-    agents->push_back(agent);
-  }
-
-  return HSA_STATUS_SUCCESS;
-}
 
 hsa_status_t discover_first_global_coarse_grain_mem_pool(hsa_amd_memory_pool_t pool, void* data) {
   if (!data) {

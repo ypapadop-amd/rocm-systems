@@ -14,6 +14,31 @@
 namespace rocr {
 namespace AMD {
 
+namespace {
+
+/// @brief Translate a core memory handle into the C ABI mirror struct.
+rocr_dynamic_driver_memory_handle_t ToFtableHandle(const core::DriverMemoryHandle& handle) {
+  rocr_dynamic_driver_memory_handle_t out{};
+  out.handle = handle.handle;
+  out.dmabuf_fd = handle.dmabuf_fd;
+  out.mmap_offset = handle.mmap_offset;
+  out.size = handle.size;
+  out.fabric_handle = handle.fabric_handle;
+  return out;
+}
+
+/// @brief Translate the C ABI mirror struct back into a core memory handle.
+void FromFtableHandle(const rocr_dynamic_driver_memory_handle_t& in,
+                      core::DriverMemoryHandle* handle) {
+  handle->handle = in.handle;
+  handle->dmabuf_fd = in.dmabuf_fd;
+  handle->mmap_offset = in.mmap_offset;
+  handle->size = in.size;
+  handle->fabric_handle = in.fabric_handle;
+}
+
+}  // namespace
+
 hsa_status_t DynamicDriver::DiscoverDriver(std::unique_ptr<core::Driver>& driver) {
   using CreateFn =
       rocr_dynamic_driver_ftable_t* (*)(rocr_dynamic_driver_context_t**);
@@ -181,50 +206,68 @@ hsa_status_t DynamicDriver::AllocQueueGWS(HSA_QUEUEID queue_id, uint32_t num_gws
   return ftable_->alloc_queue_gws(ctx_, queue_id, num_gws, first_gws);
 }
 
-hsa_status_t DynamicDriver::ExportDMABuf(void* mem, size_t size, int* dmabuf_fd,
-                                          size_t* offset) {
-  if (!ftable_->export_dmabuf) return HSA_STATUS_ERROR;
-  return ftable_->export_dmabuf(ctx_, mem, size, dmabuf_fd, offset);
+hsa_status_t DynamicDriver::ExportMemoryHandle(const core::Agent& agent,
+                                               const core::DriverMemoryHandle& handle,
+                                               core::ShareType type, void* export_handle) {
+  if (!ftable_->export_memory_handle) return HSA_STATUS_ERROR;
+  auto ft_handle = ToFtableHandle(handle);
+  return ftable_->export_memory_handle(ctx_, agent.node_id(), &ft_handle,
+                                       static_cast<int>(type), export_handle);
 }
 
-hsa_status_t DynamicDriver::ImportDMABuf(int dmabuf_fd, const core::Agent& agent,
-                                          core::ShareableHandle* handle, void* mem) {
-  if (!ftable_->import_dmabuf) return HSA_STATUS_ERROR;
-  return ftable_->import_dmabuf(ctx_, dmabuf_fd, agent.node_id(),
-                                &handle->handle, mem);
+hsa_status_t DynamicDriver::ImportMemoryHandle(const core::Agent& agent,
+                                               core::DriverMemoryHandle* handle,
+                                               core::ShareType type, void* import_handle,
+                                               void* mem) {
+  if (!ftable_->import_memory_handle) return HSA_STATUS_ERROR;
+  if (handle == nullptr || import_handle == nullptr) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
+
+  auto ft_import = ToFtableHandle(*static_cast<const core::DriverMemoryHandle*>(import_handle));
+  auto ft_handle = ToFtableHandle(*handle);
+  hsa_status_t status = ftable_->import_memory_handle(ctx_, agent.node_id(), &ft_handle,
+                                                      static_cast<int>(type), &ft_import, mem);
+  if (status != HSA_STATUS_SUCCESS) return status;
+  FromFtableHandle(ft_handle, handle);
+  return HSA_STATUS_SUCCESS;
 }
 
-hsa_status_t DynamicDriver::DestroyImportedShareableHandle(core::ShareableHandle* handle) {
-  if (!ftable_->destroy_imported_shareable_handle) return HSA_STATUS_ERROR;
-  return ftable_->destroy_imported_shareable_handle(ctx_, &handle->handle);
-}
-
-hsa_status_t DynamicDriver::Map(core::ShareableHandle handle, void* mem, size_t offset,
-                                 size_t size, hsa_access_permission_t perms) {
+hsa_status_t DynamicDriver::Map(const core::DriverMemoryHandle& handle, void* mem, size_t offset,
+                                 size_t size, hsa_access_permission_t perms, uint32_t node_id) {
   if (!ftable_->map) return HSA_STATUS_ERROR;
-  return ftable_->map(ctx_, handle.handle, mem, offset, size,
-                      static_cast<int>(perms));
+  auto ft_handle = ToFtableHandle(handle);
+  return ftable_->map(ctx_, node_id, &ft_handle, mem, offset, size, static_cast<int>(perms));
 }
 
-hsa_status_t DynamicDriver::Unmap(core::ShareableHandle handle, void* mem, size_t offset,
-                                   size_t size) {
+hsa_status_t DynamicDriver::Unmap(const core::DriverMemoryHandle& handle, void* mem, size_t offset,
+                                   size_t size, uint32_t node_id) {
   if (!ftable_->unmap) return HSA_STATUS_ERROR;
-  return ftable_->unmap(ctx_, handle.handle, mem, offset, size);
+  auto ft_handle = ToFtableHandle(handle);
+  return ftable_->unmap(ctx_, node_id, &ft_handle, mem, offset, size);
 }
 
 hsa_status_t DynamicDriver::CreateShareableHandle(void* va, void* mem, size_t size,
                                                     const core::Agent& agent,
-                                                    core::ShareableHandle* handle,
-                                                    uint64_t* offset, int* drm_fd,
-                                                    uint64_t* drm_fd_offset) {
+                                                    core::DriverMemoryHandle* handle,
+                                                    uint64_t* offset) {
   if (!ftable_->create_shareable_handle) return HSA_STATUS_ERROR;
-  return ftable_->create_shareable_handle(ctx_, va, mem, size, agent.node_id(),
-                                           &handle->handle, offset, drm_fd, drm_fd_offset);
+  if (handle == nullptr) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
+
+  auto ft_handle = ToFtableHandle(*handle);
+  hsa_status_t status = ftable_->create_shareable_handle(ctx_, va, mem, size, agent.node_id(),
+                                                         &ft_handle, offset);
+  if (status != HSA_STATUS_SUCCESS) return status;
+  FromFtableHandle(ft_handle, handle);
+  return HSA_STATUS_SUCCESS;
 }
 
-hsa_status_t DynamicDriver::DestroyShareableHandle(core::ShareableHandle* handle) {
-  if (!ftable_->destroy_shareable_handle) return HSA_STATUS_ERROR;
-  return ftable_->destroy_shareable_handle(ctx_, &handle->handle);
+hsa_status_t DynamicDriver::DestroyMemoryHandle(core::DriverMemoryHandle* handle) {
+  if (!ftable_->destroy_memory_handle) return HSA_STATUS_ERROR;
+  if (handle == nullptr) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
+
+  auto ft_handle = ToFtableHandle(*handle);
+  hsa_status_t status = ftable_->destroy_memory_handle(ctx_, &ft_handle);
+  FromFtableHandle(ft_handle, handle);
+  return status;
 }
 
 hsa_status_t DynamicDriver::SPMAcquire(uint32_t preferred_node_id) const {
@@ -262,6 +305,11 @@ hsa_status_t DynamicDriver::SetTrapHandler(uint32_t node_id, const void* base,
 hsa_status_t DynamicDriver::GetDeviceHandle(uint32_t node_id, void** device_handle) const {
   if (!ftable_->get_device_handle) return HSA_STATUS_ERROR;
   return ftable_->get_device_handle(ctx_, node_id, device_handle);
+}
+
+hsa_status_t DynamicDriver::GetDeviceFd(uint32_t node_id, int* fd) const {
+  if (!ftable_->get_device_fd) return HSA_STATUS_ERROR;
+  return ftable_->get_device_fd(ctx_, node_id, fd);
 }
 
 hsa_status_t DynamicDriver::GetClockCounters(uint32_t node_id,

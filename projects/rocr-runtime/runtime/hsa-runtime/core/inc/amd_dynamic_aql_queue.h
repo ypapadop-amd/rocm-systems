@@ -71,7 +71,6 @@ class DynamicAqlQueue : public core::Queue,
   }
 
   HSA_QUEUEID queue_id_ = INVALID_QUEUEID;
-  uint32_t queue_size_bytes_ = 0;
   void* ring_buf_ = nullptr;
   std::atomic<bool> active_ = false;
 };

@@ -23,6 +23,40 @@ extern "C" {
 typedef struct rocr_dynamic_driver_context_t rocr_dynamic_driver_context_t;
 
 /**
+ * @brief Format of a shareable memory handle for export and import.
+ *
+ * Mirrors @c rocr::core::ShareType. Selects how @c export_memory_handle and
+ * @c import_memory_handle encode the external reference to a driver memory
+ * allocation.
+ */
+typedef enum rocr_dynamic_driver_share_type_t {
+  /** POSIX file descriptor for a DMA-BUF object (local / same-machine sharing). */
+  ROCR_DYNAMIC_SHARE_DMABUF_FD = 0,
+  /** Globally unique fabric handle for multi-node / cross-domain sharing. */
+  ROCR_DYNAMIC_SHARE_FABRIC_HANDLE = 1,
+} rocr_dynamic_driver_share_type_t;
+
+/**
+ * @brief Handle for exported / imported memory.
+ *
+ * Mirrors @c rocr::core::DriverMemoryHandle. The runtime translates between
+ * that C++ type and this struct across the ABI boundary; the two must stay
+ * field-compatible.
+ */
+typedef struct rocr_dynamic_driver_memory_handle_t {
+  /** Driver-defined handle value (0 means invalid). */
+  uint64_t handle;
+  /** DMA-buf file descriptor (-1 when unused). */
+  int dmabuf_fd;
+  /** Offset used for CPU mmap of the backing allocation. */
+  uint64_t mmap_offset;
+  /** Size of the allocation in bytes. */
+  size_t size;
+  /** Fabric handle for cross-domain sharing. */
+  hsa_fabric_handle_t fabric_handle;
+} rocr_dynamic_driver_memory_handle_t;
+
+/**
  * @brief Function table for a dynamically-loaded HSA driver.
  *
  * A shared library loaded via LD_PRELOAD exports a factory function
@@ -245,44 +279,55 @@ typedef struct rocr_dynamic_driver_ftable_t {
    */
   hsa_status_t (*make_memory_unresident)(rocr_dynamic_driver_context_t* ctx, const void* mem);
 
-  /* ---- DMA-buf / Sharing ------------------------------------------------ */
+  /* ---- Memory sharing --------------------------------------------------- */
 
   /**
-   * @brief Export a memory allocation as a DMA-buf file descriptor.
-   * @param[in]  ctx        Driver context.
-   * @param[in]  mem        Pointer to the allocated memory.
-   * @param[in]  size       Allocation size in bytes.
-   * @param[out] dmabuf_fd  File descriptor for the exported DMA-buf.
-   * @param[out] offset     Offset within the DMA-buf where the data starts.
+   * @brief Export a memory allocation as a shareable handle.
+   * @param[in]  ctx            Driver context.
+   * @param[in]  node_id        Topology node that owns the allocation.
+   * @param[in]  handle         Driver memory handle to export.
+   * @param[in]  share_type     @ref rocr_dynamic_driver_share_type_t selecting
+   *                            the encoding of @p export_handle.
+   * @param[out] export_handle  Output handle; @c int* for
+   *                            @c ROCR_DYNAMIC_SHARE_DMABUF_FD, or
+   *                            @c hsa_fabric_handle_t* for
+   *                            @c ROCR_DYNAMIC_SHARE_FABRIC_HANDLE.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*export_dmabuf)(rocr_dynamic_driver_context_t* ctx, void* mem, size_t size, int* dmabuf_fd, size_t* offset);
+  hsa_status_t (*export_memory_handle)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id,
+                                       const rocr_dynamic_driver_memory_handle_t* handle,
+                                       int share_type, void* export_handle);
 
   /**
-   * @brief Import a DMA-buf file descriptor for use by a node.
-   * @param[in]  ctx        Driver context.
-   * @param[in]  dmabuf_fd  File descriptor of the DMA-buf to import.
-   * @param[in]  node_id    Topology node that will access the buffer.
-   * @param[out] handle     Opaque handle representing the imported buffer.
-   * @param[in]  mem        Pointer to associate with the import (may be
-   *                        NULL).
+   * @brief Import a memory allocation from a shareable handle.
+   *
+   * The resulting handle must be destroyed with @c destroy_memory_handle.
+   *
+   * @param[in]  ctx            Driver context.
+   * @param[in]  node_id        Topology node that will access the buffer.
+   * @param[out] handle         Handle to the imported memory; @c handle->size is
+   *                            set to the imported allocation size in bytes.
+   * @param[in]  share_type     @ref rocr_dynamic_driver_share_type_t selecting
+   *                            the encoding of @p import_handle.
+   * @param[in]  import_handle  Input handle; a
+   *                            @c rocr_dynamic_driver_memory_handle_t* whose
+   *                            @c dmabuf_fd field is read for
+   *                            @c ROCR_DYNAMIC_SHARE_DMABUF_FD and whose
+   *                            @c fabric_handle field is read for
+   *                            @c ROCR_DYNAMIC_SHARE_FABRIC_HANDLE.
+   * @param[in]  mem            Address of an existing buffer, used to bypass
+   *                            import (may be NULL).
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*import_dmabuf)(rocr_dynamic_driver_context_t* ctx, int dmabuf_fd, uint32_t node_id,
-                                uint64_t* handle, void* mem);
-
-  /**
-   * @brief Destroy a handle obtained from @c import_dmabuf.
-   * @param[in]     ctx     Driver context.
-   * @param[in,out] handle  Handle to destroy; set to 0 on success.
-   * @return HSA_STATUS_SUCCESS on success.
-   */
-  hsa_status_t (*destroy_imported_shareable_handle)(rocr_dynamic_driver_context_t* ctx, uint64_t* handle);
+  hsa_status_t (*import_memory_handle)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id,
+                                       rocr_dynamic_driver_memory_handle_t* handle, int share_type,
+                                       void* import_handle, void* mem);
 
   /**
    * @brief Map a shared memory region into the caller's address space.
    * @param[in] ctx     Driver context.
-   * @param[in] handle  Handle from @c import_dmabuf or
+   * @param[in] node_id Topology node performing the mapping.
+   * @param[in] handle  Handle from @c import_memory_handle or
    *                    @c create_shareable_handle.
    * @param[in] mem     Base address for the mapping.
    * @param[in] offset  Byte offset within the shared region.
@@ -291,47 +336,53 @@ typedef struct rocr_dynamic_driver_ftable_t {
    *                    @c hsa_access_permission_t).
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*map)(rocr_dynamic_driver_context_t* ctx, uint64_t handle, void* mem, size_t offset, size_t size, int perms);
+  hsa_status_t (*map)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id,
+                      const rocr_dynamic_driver_memory_handle_t* handle, void* mem, size_t offset,
+                      size_t size, int perms);
 
   /**
    * @brief Unmap a previously mapped shared memory region.
    * @param[in] ctx     Driver context.
+   * @param[in] node_id Topology node performing the unmapping.
    * @param[in] handle  Handle used in the corresponding @c map call.
    * @param[in] mem     Base address of the mapping.
    * @param[in] offset  Byte offset within the shared region.
    * @param[in] size    Number of bytes to unmap.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*unmap)(rocr_dynamic_driver_context_t* ctx, uint64_t handle, void* mem, size_t offset, size_t size);
+  hsa_status_t (*unmap)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id,
+                        const rocr_dynamic_driver_memory_handle_t* handle, void* mem, size_t offset,
+                        size_t size);
 
   /**
    * @brief Create a shareable handle for an existing memory allocation.
    *
    * The returned handle can be passed to another process or agent for
-   * mapping via @c map.
+   * mapping via @c map, and must be destroyed with @c destroy_memory_handle.
    *
-   * @param[in]  ctx             Driver context.
-   * @param[in]  va              Virtual address of the allocation.
-   * @param[in]  mem             Backing memory pointer.
-   * @param[in]  size            Allocation size in bytes.
-   * @param[in]  node_id         Topology node that owns the allocation.
-   * @param[out] handle          Opaque shareable handle.
-   * @param[out] offset          Offset within the exportable object.
-   * @param[out] drm_fd          DRM file descriptor (if applicable).
-   * @param[out] drm_fd_offset   Offset within the DRM object.
+   * @param[in]  ctx      Driver context.
+   * @param[in]  va       Virtual address of the allocation.
+   * @param[in]  mem      Backing memory pointer.
+   * @param[in]  size     Allocation size in bytes.
+   * @param[in]  node_id  Topology node that owns the allocation.
+   * @param[out] handle   Shareable driver memory handle.
+   * @param[out] offset   Offset within the exportable object.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*create_shareable_handle)(rocr_dynamic_driver_context_t* ctx, void* va, void* mem, size_t size,
-                                          uint32_t node_id, uint64_t* handle, uint64_t* offset,
-                                          int* drm_fd, uint64_t* drm_fd_offset);
+  hsa_status_t (*create_shareable_handle)(rocr_dynamic_driver_context_t* ctx, void* va, void* mem,
+                                          size_t size, uint32_t node_id,
+                                          rocr_dynamic_driver_memory_handle_t* handle,
+                                          uint64_t* offset);
 
   /**
-   * @brief Destroy a handle created by @c create_shareable_handle.
+   * @brief Destroy a handle created by @c create_shareable_handle or
+   *        @c import_memory_handle.
    * @param[in]     ctx     Driver context.
-   * @param[in,out] handle  Handle to destroy; set to 0 on success.
+   * @param[in,out] handle  Handle to destroy; cleared on success.
    * @return HSA_STATUS_SUCCESS on success.
    */
-  hsa_status_t (*destroy_shareable_handle)(rocr_dynamic_driver_context_t* ctx, uint64_t* handle);
+  hsa_status_t (*destroy_memory_handle)(rocr_dynamic_driver_context_t* ctx,
+                                        rocr_dynamic_driver_memory_handle_t* handle);
 
   /* ---- Queue ------------------------------------------------------------ */
 
@@ -492,6 +543,15 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @return HSA_STATUS_SUCCESS on success.
    */
   hsa_status_t (*get_device_handle)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, void** device_handle);
+
+  /**
+   * @brief Get a platform-specific device file descriptor for a node.
+   * @param[in]  ctx      Driver context.
+   * @param[in]  node_id  Topology node index.
+   * @param[out] fd       Device file descriptor.
+   * @return HSA_STATUS_SUCCESS on success.
+   */
+  hsa_status_t (*get_device_fd)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, int* fd);
 
   /**
    * @brief Read hardware clock counters for a node.
