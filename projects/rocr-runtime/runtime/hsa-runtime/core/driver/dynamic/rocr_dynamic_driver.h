@@ -449,17 +449,26 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in]  queue_addr                Ring buffer address, or NULL if
    *                                       the driver should allocate one.
    * @param[in]  queue_size_bytes          Ring buffer size in bytes.
+   * @param[in]  read_index_ptr            Address of the runtime's read
+   *                                       dispatch index. The driver stores
+   *                                       its completion progress here.
    * @param[in]  queue_metadata_size_bytes Size of per-queue metadata.
    * @param[in]  event                     Event for queue error
    *                                       notification, or NULL.
-   * @param[out] queue_resource            Filled with the queue's hardware
-   *                                       resource handles (e.g. QueueId).
+   * @param[out] queue_resource            Must be filled with QueueId and
+   *                                       with Queue_DoorBell_aql pointing
+   *                                       at a driver-owned uint64_t. The
+   *                                       runtime writes the index of the
+   *                                       last submitted packet to that
+   *                                       word; the driver observes it.
+   *                                       Initialize it to UINT64_MAX.
    * @return HSA_STATUS_SUCCESS on success.
    */
   hsa_status_t (*create_queue)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, uint32_t type, uint32_t queue_pct,
                                 uint32_t priority, uint32_t sdma_engine_id, void* queue_addr,
-                                uint64_t queue_size_bytes, uint64_t queue_metadata_size_bytes,
-                                HsaEvent* event, HsaQueueResource* queue_resource);
+                                uint64_t queue_size_bytes, uint64_t* read_index_ptr,
+                                uint64_t queue_metadata_size_bytes, HsaEvent* event,
+                                HsaQueueResource* queue_resource);
 
   /**
    * @brief Destroy a queue created by @c create_queue.

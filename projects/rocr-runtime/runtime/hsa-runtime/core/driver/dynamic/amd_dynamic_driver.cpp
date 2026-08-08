@@ -185,16 +185,26 @@ hsa_status_t DynamicDriver::FreeMemory(const core::DriverMemoryHandle& handle) {
   return ftable_->free_memory(ctx_, reinterpret_cast<void*>(handle.handle), handle.size);
 }
 
+hsa_status_t DynamicDriver::CreateQueueWithReadIndex(
+    uint32_t node_id, HSA_QUEUE_TYPE type, uint32_t queue_pct,
+    HSA::hsa_amd_queue_priority_internal_t priority, uint32_t sdma_engine_id, void* queue_addr,
+    uint64_t queue_size_bytes, uint64_t* read_index_ptr, uint64_t queue_metadata_size_bytes,
+    HsaEvent* event, HsaQueueResource& queue_resource) const {
+  if (!ftable_->create_queue) return HSA_STATUS_ERROR;
+  return ftable_->create_queue(ctx_, node_id, static_cast<uint32_t>(type), queue_pct,
+                               static_cast<uint32_t>(priority), sdma_engine_id, queue_addr,
+                               queue_size_bytes, read_index_ptr, queue_metadata_size_bytes, event,
+                               &queue_resource);
+}
+
 hsa_status_t DynamicDriver::CreateQueue(
     uint32_t node_id, HSA_QUEUE_TYPE type, uint32_t queue_pct,
     HSA::hsa_amd_queue_priority_internal_t priority, uint32_t sdma_engine_id,
     void* queue_addr, uint64_t queue_size_bytes, uint64_t queue_metadata_size_bytes,
     HsaEvent* event, HsaQueueResource& queue_resource) const {
-  if (!ftable_->create_queue) return HSA_STATUS_ERROR;
-  return ftable_->create_queue(ctx_, node_id, static_cast<uint32_t>(type), queue_pct,
-                                static_cast<uint32_t>(priority), sdma_engine_id, queue_addr,
-                                queue_size_bytes, queue_metadata_size_bytes, event,
-                                &queue_resource);
+  return CreateQueueWithReadIndex(node_id, type, queue_pct, priority, sdma_engine_id, queue_addr,
+                                  queue_size_bytes, nullptr, queue_metadata_size_bytes, event,
+                                  queue_resource);
 }
 
 hsa_status_t DynamicDriver::DestroyQueue(HSA_QUEUEID queue_id) const {

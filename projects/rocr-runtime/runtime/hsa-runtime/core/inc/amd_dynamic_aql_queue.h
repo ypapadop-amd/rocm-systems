@@ -63,8 +63,6 @@ class DynamicAqlQueue : public core::Queue,
   bool _IsA(Queue::rtti_t id) const override { return id == &rtti_id(); }
 
  private:
-  void SubmitPackets();
-
   static __forceinline int& rtti_id() {
     static int rtti_id_ = 0;
     return rtti_id_;

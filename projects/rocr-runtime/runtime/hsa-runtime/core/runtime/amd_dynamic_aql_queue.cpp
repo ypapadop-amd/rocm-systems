@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cassert>
 
+#include "core/inc/amd_dynamic_driver.h"
 #include "core/inc/queue.h"
 #include "core/inc/runtime.h"
 #include "core/inc/signal.h"
@@ -46,18 +47,19 @@ DynamicAqlQueue::DynamicAqlQueue(core::SharedQueue* shared_queue, DynamicAgent* 
   amd_queue_.write_dispatch_id = 0;
   amd_queue_.read_dispatch_id = 0;
 
-  signal_.hardware_doorbell_ptr = nullptr;
   signal_.kind = AMD_SIGNAL_KIND_DOORBELL;
   signal_.queue_ptr = &amd_queue_;
 
   HsaQueueResource queue_resource = {};
-  hsa_status_t status = agent->driver().CreateQueue(
-      node_id, HSA_QUEUE_COMPUTE_AQL, 0, rocr::HSA::HSA_AMD_QUEUE_PRIORITY_NORMAL, 0, nullptr,
-      queue_size_bytes, 0, nullptr, queue_resource);
+  hsa_status_t status = static_cast<DynamicDriver&>(agent->driver()).CreateQueueWithReadIndex(
+      node_id, HSA_QUEUE_COMPUTE_AQL, 0, rocr::HSA::HSA_AMD_QUEUE_PRIORITY_NORMAL, 0,
+      ring_buf_, queue_size_bytes, (uint64_t*)&amd_queue_.read_dispatch_id, 0, nullptr,
+      queue_resource);
   if (status != HSA_STATUS_SUCCESS) {
     throw hsa_exception(status, "Failed to create a hardware context for a Dynamic queue.");
   }
   queue_id_ = queue_resource.QueueId;
+  signal_.hardware_doorbell_ptr = queue_resource.Queue_DoorBell_aql;
 
   active_ = true;
 
@@ -152,15 +154,10 @@ uint64_t DynamicAqlQueue::AddWriteIndexAcqRel(uint64_t value) {
   return atomic::Add(&amd_queue_.write_dispatch_id, value, std::memory_order_acq_rel);
 }
 
-void DynamicAqlQueue::StoreRelaxed(hsa_signal_value_t value) { SubmitPackets(); }
-
-void DynamicAqlQueue::SubmitPackets() {
-  if (!active_.load(std::memory_order_relaxed)) {
-    return;
-  }
-
-  const uint64_t last_pkt_idx = LoadWriteIndexAcquire();
-  atomic::Store(&amd_queue_.read_dispatch_id, last_pkt_idx, std::memory_order_release);
+void DynamicAqlQueue::StoreRelaxed(hsa_signal_value_t value) {
+  // Mirrors AqlQueue: the doorbell is a plain memory write the device observes.
+  _mm_sfence();
+  *(signal_.hardware_doorbell_ptr) = uint64_t(value);
 }
 
 void DynamicAqlQueue::StoreRelease(hsa_signal_value_t value) {

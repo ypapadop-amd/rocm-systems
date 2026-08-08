@@ -46,6 +46,15 @@ public:
                            void* queue_addr, uint64_t queue_size_bytes,
                            uint64_t queue_metadata_size_bytes, HsaEvent* event,
                            HsaQueueResource& queue_resource) const override;
+  /// @brief CreateQueue variant that also hands the driver the runtime's read
+  /// dispatch index. Used by DynamicAqlQueue; core::Driver::CreateQueue
+  /// forwards here with a null read index for interface compatibility.
+  hsa_status_t CreateQueueWithReadIndex(uint32_t node_id, HSA_QUEUE_TYPE type, uint32_t queue_pct,
+                                        HSA::hsa_amd_queue_priority_internal_t priority,
+                                        uint32_t sdma_engine_id, void* queue_addr,
+                                        uint64_t queue_size_bytes, uint64_t* read_index_ptr,
+                                        uint64_t queue_metadata_size_bytes, HsaEvent* event,
+                                        HsaQueueResource& queue_resource) const;
   hsa_status_t DestroyQueue(HSA_QUEUEID queue_id) const override;
   hsa_status_t UpdateQueue(HSA_QUEUEID queue_id, uint32_t queue_pct,
                            HSA::hsa_amd_queue_priority_internal_t priority, void* queue_addr,
