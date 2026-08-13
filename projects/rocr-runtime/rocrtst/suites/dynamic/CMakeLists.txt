@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.20)
 
 project(dynamic_tests)
 
+set(ROCR_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../.." CACHE PATH
+    "Path to the rocr-runtime source tree")
+find_package(Threads REQUIRED)
+
 include(FetchContent)
 
 FetchContent_Declare(
@@ -15,7 +19,10 @@ find_package(hsa-runtime64 CONFIG REQUIRED NAMES hsa_runtime64 hsa-runtime64)
 
 include(GoogleTest)
 
-# Declare a dynamic-driver test executable built from <name>.cc.
+add_subdirectory(dynaccel)
+
+# Declare a dynamic-driver test executable built from <name>.cc, registered twice:
+# once with no driver present, once with libdynaccel.so preloaded.
 function(add_dynamic_test name)
   add_executable(${name} ${name}.cc)
   set_target_properties(${name}
@@ -27,8 +34,16 @@ function(add_dynamic_test name)
       POSITION_INDEPENDENT_CODE   ON
   )
   target_compile_options(${name} PRIVATE -Wall -Wextra -Wpedantic)
+  target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/dynaccel)
   target_link_libraries(${name} PRIVATE hsa-runtime64::hsa-runtime64 GTest::gtest_main)
-  gtest_discover_tests(${name})
+
+  add_test(NAME ${name}_nodriver
+           COMMAND ${name} --gtest_filter=*NoDynamicDriver*)
+
+  add_test(NAME ${name}_dynaccel
+           COMMAND ${name} --gtest_filter=-*NoDynamicDriver*)
+  set_tests_properties(${name}_dynaccel PROPERTIES
+    ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:dynaccel>;HSA_ENABLE_INTERRUPT=0")
 endfunction()
 
 add_dynamic_test(memory)

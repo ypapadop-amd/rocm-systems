@@ -126,6 +126,28 @@ TEST(Dispatch, SubmitBarrierPacket) {
   EXPECT_EQ(hsa_shut_down(), HSA_STATUS_SUCCESS);
 }
 
+TEST(DynAccel, AgentDiscovered) {
+  ASSERT_EQ(hsa_init(), HSA_STATUS_SUCCESS);
+
+  std::vector<hsa_agent_t> dynamic_agents;
+  ASSERT_EQ(hsa_iterate_agents(discover_agents<HSA_DEVICE_TYPE_DYNAMIC>, &dynamic_agents),
+            HSA_STATUS_SUCCESS);
+  ASSERT_EQ(dynamic_agents.size(), 1u);
+
+  char name[64] = {};
+  ASSERT_EQ(hsa_agent_get_info(dynamic_agents.front(), HSA_AGENT_INFO_NAME, name),
+            HSA_STATUS_SUCCESS);
+  EXPECT_STREQ(name, "DynAccel");
+
+  uint32_t queue_max_size = 0;
+  ASSERT_EQ(hsa_agent_get_info(dynamic_agents.front(), HSA_AGENT_INFO_QUEUE_MAX_SIZE,
+                               &queue_max_size),
+            HSA_STATUS_SUCCESS);
+  EXPECT_EQ(queue_max_size, 64u);
+
+  EXPECT_EQ(hsa_shut_down(), HSA_STATUS_SUCCESS);
+}
+
 TEST(Dispatch, SubmitAgentDispatchPacket) {
   ASSERT_EQ(hsa_init(), HSA_STATUS_SUCCESS);
 
