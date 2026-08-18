@@ -33,10 +33,12 @@
 The dynamic suite is a **standalone** CMake project (`rocrtst/suites/dynamic/CMakeLists.txt` declares `project(dynamic_tests)` and calls `find_package(hsa-runtime64)`), so it builds against an *installed* ROCr, not in-tree.
 
 ```bash
-# One-time, and again after any ROCr-side change (Tasks 1-3):
+# One-time, and again after any ROCr-side change (Tasks 1-3). Always use a
+# FRESH build directory when changing the toolchain: CMake caches LLVM_DIR, so
+# re-configuring an existing build dir will silently keep the old compiler.
 cmake -S projects/rocr-runtime -B /tmp/rocr-build \
       -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=/tmp/rocr-install \
-      -DCMAKE_PREFIX_PATH=/opt/rocm
+      -DCMAKE_PREFIX_PATH=/usr/lib/llvm-22
 cmake --build /tmp/rocr-build -j"$(nproc)"
 cmake --install /tmp/rocr-build
 
@@ -47,34 +49,24 @@ cmake --build /tmp/dynaccel-build -j"$(nproc)"
 ctest --test-dir /tmp/dynaccel-build --output-on-failure
 ```
 
-`-DCMAKE_PREFIX_PATH=/opt/rocm` is required: without it, `find_package(LLVM)` resolves to the
-system LLVM (e.g. Ubuntu's `/usr/lib/llvm-20`), which lacks gfx1250 target support and fails
-with `clang-20: error: invalid target ID 'gfx1250'`. With the ROCm prefix, `LLVM_DIR` resolves
-to `/opt/rocm/llvm/lib/cmake/llvm` (AMD clang, ROCm-provided), which supports it.
+Configure against the **system** LLVM 22 (`-DCMAKE_PREFIX_PATH=/usr/lib/llvm-22`), not
+`/opt/rocm`. The relevant file is `core/runtime/trap_handler/trap_handler_gfx12.s`, which is
+assembled once for `gfx1200` and once for `gfx1250`; it uses `HW_REG_WAVE_SCHED_MODE`
+unguarded. Testing the actual compiler matrix on this host showed:
 
-Even with that fix, the full `hsa-runtime64` (and therefore top-level `all`) target does not
-build clean on this host: `core/runtime/trap_handler/trap_handler_gfx12.s:1361` fails to
-assemble (`s_setreg_b32 hwreg(HW_REG_WAVE_SCHED_MODE, 0, 2), ttmp2` — "expected a register name
-or an absolute expression"). This is a pre-existing assembler/toolchain compatibility issue in
-the GCN trap handler, unrelated to the dynamic driver/agent files touched by Tasks 1-3; do not
-attempt to fix it as part of this plan.
-
-To verify Tasks 1-3's actual C++ changes without waiting on that unrelated blocker, build just
-the three dynamic-subsystem translation units directly via the generated Makefile, bypassing
-the trap-handler dependency:
-```bash
-gmake -C /tmp/rocr-build -f runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/build.make \
-  runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/core/driver/dynamic/amd_dynamic_driver.cpp.o \
-  runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/core/runtime/amd_dynamic_agent.cpp.o \
-  runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/core/runtime/amd_dynamic_aql_queue.cpp.o
 ```
-A clean exit (object files produced, no `error:` in the output) is the acceptance bar for
-Tasks 1-3 until the trap-handler issue is resolved separately.
+/opt/rocm-7.2.3/lib/llvm/bin/clang-22 : gfx1200 FAIL, gfx1250 OK
+/usr/bin/clang-22                     : gfx1200 OK,   gfx1250 OK
+```
 
-**The test-suite commands remain unverified** — there is no installed ROCr and I have not run
-them. If ROCr's top-level CMake needs further options (it wraps `add_subdirectory` in a helper
-at `CMakeLists.txt:70-84`), fix the invocation in whichever task first needs a full install and
-correct this section as part of that task's commit.
+ROCm's own clang fork does not recognize that register for gfx1200 (giving the
+"expected a register name or an absolute expression" assembler error); upstream LLVM 22 does.
+An older, unrelated attempt to work around this by pointing at a Ubuntu-packaged
+`/usr/lib/llvm-20` instead surfaced a second, distinct failure
+(`clang-20: error: invalid target ID 'gfx1250'` — that LLVM's AMDGPU backend simply predates
+gfx1250) and is not the fix; `/usr/lib/llvm-22` builds both targets cleanly. With the correct
+toolchain, `hsa-runtime64` (and therefore the top-level `all` target) builds clean — this is no
+longer a blocker for any task in this plan.
 
 `/dev/udmabuf` on this host is `root:kvm`. If the executing user is not in `kvm`, the driver falls back to plain `mmap` and the dma-buf tests skip themselves — that is expected, not a failure.
 
@@ -216,23 +208,15 @@ Run:
 ```bash
 cmake -S projects/rocr-runtime -B /tmp/rocr-build \
       -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=/tmp/rocr-install \
-      -DCMAKE_PREFIX_PATH=/opt/rocm
+      -DCMAKE_PREFIX_PATH=/usr/lib/llvm-22
 cmake --build /tmp/rocr-build -j"$(nproc)" 2>&1 | tail -40
+cmake --install /tmp/rocr-build
 ```
-`-DCMAKE_PREFIX_PATH=/opt/rocm` is required so `find_package(LLVM)` resolves to ROCm's clang
-instead of a system LLVM lacking newer GPU target support (see "Build and test commands" above
-for details). Even with that fix, the full build does not complete on this host: a pre-existing,
-unrelated assembler failure in `core/runtime/trap_handler/trap_handler_gfx12.s` blocks the
-`hsa-runtime64` target regardless of this task's changes. Do not attempt to fix it here.
-Verify this task's actual changes with the narrower command from "Build and test commands":
-```bash
-gmake -C /tmp/rocr-build -f runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/build.make \
-  runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/core/driver/dynamic/amd_dynamic_driver.cpp.o \
-  runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/core/runtime/amd_dynamic_agent.cpp.o \
-  runtime/hsa-runtime/CMakeFiles/hsa-runtime64.dir/core/runtime/amd_dynamic_aql_queue.cpp.o
-```
-Expected: all three objects build with no `error:` output. This is the acceptance bar for this
-task; do not claim the full build is clean if it is not.
+`-DCMAKE_PREFIX_PATH=/usr/lib/llvm-22` (the system LLVM 22, not `/opt/rocm`) is required so
+`find_package(LLVM)` resolves to a toolchain that assembles both the `gfx1200` and `gfx1250`
+variants of `core/runtime/trap_handler/trap_handler_gfx12.s` cleanly (see "Build and test
+commands" above for details). With that toolchain the full `hsa-runtime64` target builds and
+installs cleanly — this is no longer a blocker.
 
 - [ ] **Step 8: Commit**
 

@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(dynamic_tests)
 
+enable_testing()
+
 set(ROCR_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../.." CACHE PATH
     "Path to the rocr-runtime source tree")
 find_package(Threads REQUIRED)
