@@ -482,6 +482,8 @@ class Runtime {
 
   const std::vector<Agent*>& aie_agents() { return aie_agents_; }
 
+  const std::vector<Agent*>& dynamic_agents() { return dynamic_agents_; }
+
   const std::vector<Agent*>& disabled_gpu_agents() { return disabled_gpu_agents_; }
 
   const std::vector<uint32_t>& gpu_ids() { return gpu_ids_; }
@@ -898,6 +900,9 @@ class Runtime {
 
   // Agent list containing all compatible AIE agents in the platform.
   std::vector<Agent*> aie_agents_;
+
+  // AMD Dynamic driver agents.
+  std::vector<Agent*> dynamic_agents_;
 
   // Agent list containing incompletely initialized GPU agents not to be used by the process.
   std::vector<Agent*> disabled_gpu_agents_;

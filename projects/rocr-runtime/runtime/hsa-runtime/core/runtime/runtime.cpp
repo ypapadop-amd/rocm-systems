@@ -258,6 +258,8 @@ void Runtime::RegisterAgent(Agent* agent, bool Enabled) {
     }
   } else if (agent->device_type() == Agent::DeviceType::kAmdAieDevice) {
     aie_agents_.push_back(agent);
+  } else if (agent->device_type() == Agent::DeviceType::kDynamicDevice) {
+    dynamic_agents_.push_back(agent);
   }
 }
 
@@ -281,6 +283,9 @@ void Runtime::DestroyAgents() {
 
   std::for_each(aie_agents_.begin(), aie_agents_.end(), DeleteObject());
   aie_agents_.clear();
+
+  std::for_each(dynamic_agents_.begin(), dynamic_agents_.end(), DeleteObject());
+  dynamic_agents_.clear();
 
   region_gpu_ = NULL;
 }
@@ -318,7 +323,8 @@ hsa_status_t Runtime::IterateAgent(hsa_status_t (*callback)(hsa_agent_t agent, v
                                    void* data) {
   AMD::callback_t<decltype(callback)> call(callback);
 
-  std::vector<core::Agent*>* agent_lists[3] = {&cpu_agents_, &gpu_agents_, &aie_agents_};
+  std::vector<core::Agent*>* agent_lists[4] = {&cpu_agents_, &gpu_agents_, &aie_agents_,
+                                               &dynamic_agents_};
   for (std::vector<core::Agent*>* agent_list : agent_lists) {
     for (size_t i = 0; i < agent_list->size(); ++i) {
       hsa_agent_t agent = Agent::Convert(agent_list->at(i));
@@ -3995,6 +4001,8 @@ hsa_status_t Runtime::DmaBufExport(const void* ptr, size_t size, int* dmabuf, ui
             return HSA_STATUS_ERROR_INVALID_AGENT;
           case Agent::kAmdAieDevice:
             break;
+          case Agent::kDynamicDevice:
+            return HSA_STATUS_ERROR_INVALID_AGENT;
           case Agent::kUnknownDevice:
             return HSA_STATUS_ERROR_INVALID_AGENT;
         }
