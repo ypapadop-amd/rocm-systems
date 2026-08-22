@@ -139,6 +139,13 @@ TEST(DynAccel, AgentDiscovered) {
             HSA_STATUS_SUCCESS);
   EXPECT_STREQ(name, "DynAccel");
 
+  char product_name[64] = {};
+  ASSERT_EQ(hsa_agent_get_info(dynamic_agents.front(),
+                               static_cast<hsa_agent_info_t>(HSA_AMD_AGENT_INFO_PRODUCT_NAME),
+                               product_name),
+            HSA_STATUS_SUCCESS);
+  EXPECT_STREQ(product_name, "DynAccel");
+
   uint32_t queue_max_size = 0;
   ASSERT_EQ(hsa_agent_get_info(dynamic_agents.front(), HSA_AGENT_INFO_QUEUE_MAX_SIZE,
                                &queue_max_size),

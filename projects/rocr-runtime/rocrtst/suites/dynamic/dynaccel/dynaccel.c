@@ -65,8 +65,22 @@ static hsa_status_t dynaccel_get_node_properties(rocr_dynamic_driver_context_t* 
   memset(node_props, 0, sizeof(*node_props));
   node_props->NumMemoryBanks = 2;
   /* No CPU/compute/neural cores: ROCr routes the node to DiscoverDynamic. */
+  /* AMDName is a plain HSAuint8 byte buffer, so strncpy is correct here. */
   strncpy((char*)node_props->AMDName, "DynAccel", sizeof(node_props->AMDName) - 1);
-  strncpy((char*)node_props->MarketingName, "DynAccel", sizeof(node_props->MarketingName) - 1);
+  /*
+   * MarketingName, unlike AMDName, is HSAuint16[HSA_PUBLIC_NAME_SIZE] -- one
+   * ASCII character per 16-bit element, not a byte buffer. strncpy-ing into
+   * it as if it were char* packs two bytes per element, and readers that
+   * pull out the low byte of each element (as HSA_AMD_AGENT_INFO_PRODUCT_NAME
+   * does) get every other character back. Copy element-by-element instead.
+   */
+  {
+    static const char kMarketingName[] = "DynAccel";
+    size_t i;
+    for (i = 0; i < sizeof(kMarketingName) - 1 && i < HSA_PUBLIC_NAME_SIZE; ++i) {
+      node_props->MarketingName[i] = (HSAuint16)kMarketingName[i];
+    }
+  }
   return HSA_STATUS_SUCCESS;
 }
 
