@@ -26,7 +26,11 @@ struct dynaccel_queue;
 
 struct rocr_dynamic_driver_context_t {
   int udmabuf_fd;              /* -1 => plain-mmap fallback */
-  pthread_mutex_t lock;        /* guards allocs and queues */
+  /* Guards list membership of allocs and queues only. It is deliberately
+   * not held across munmap/close/dup, so free/export mutual exclusion on a
+   * single allocation is not enforced by this lock - see the note above
+   * dynaccel_free_memory. */
+  pthread_mutex_t lock;
   struct dynaccel_alloc* allocs;
   struct dynaccel_queue* queues;
   uint64_t next_id;
@@ -135,6 +139,16 @@ static struct dynaccel_alloc* dynaccel_find_alloc(rocr_dynamic_driver_context_t*
   return NULL;
 }
 
+/* Unlinks under ctx->lock, then munmaps/closes/frees outside it - so a
+ * concurrent export_memory_handle that has already read a->dmabuf_fd could
+ * in principle dup() an fd number this call is about to close and the
+ * kernel could reuse. That race is not reachable today only because ROCr
+ * serializes the two callers above the driver: Runtime::DmaBufExport holds
+ * memory_lock_ shared for its whole body, and Runtime::FreeMemory must take
+ * that lock exclusively before it can reach this function. A driver copying
+ * this pattern for a caller that does not offer the same guarantee must
+ * refcount the allocation instead, so a free cannot complete while an
+ * export still holds a reference to it. */
 static hsa_status_t dynaccel_free_memory(rocr_dynamic_driver_context_t* ctx, void* mem,
                                          size_t size) {
   (void)size;
