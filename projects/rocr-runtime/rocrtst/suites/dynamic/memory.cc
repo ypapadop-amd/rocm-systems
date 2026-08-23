@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include <cstring>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -401,5 +402,45 @@ TEST(Memory, VMemSetAccess) {
   EXPECT_EQ(hsa_amd_vmem_unmap(buffer, allocation_size), HSA_STATUS_SUCCESS);
   EXPECT_EQ(hsa_amd_vmem_address_free(buffer, allocation_size), HSA_STATUS_SUCCESS);
   EXPECT_EQ(hsa_amd_vmem_handle_release(memory_handle), HSA_STATUS_SUCCESS);
+  EXPECT_EQ(hsa_shut_down(), HSA_STATUS_SUCCESS);
+}
+
+TEST(Memory, UdmabufExport) {
+  ASSERT_EQ(hsa_init(), HSA_STATUS_SUCCESS);
+
+  std::vector<hsa_agent_t> dynamic_agents;
+  ASSERT_EQ(hsa_iterate_agents(discover_agents<HSA_DEVICE_TYPE_DYNAMIC>, &dynamic_agents),
+            HSA_STATUS_SUCCESS);
+  ASSERT_FALSE(dynamic_agents.empty());
+
+  hsa_amd_memory_pool_t pool = {};
+  ASSERT_EQ(hsa_amd_agent_iterate_memory_pools(
+                dynamic_agents.front(), discover_first_global_coarse_grain_mem_pool, &pool),
+            HSA_STATUS_INFO_BREAK);
+
+  constexpr std::size_t allocation_size = 4096;
+  void* buffer = nullptr;
+  ASSERT_EQ(hsa_amd_memory_pool_allocate(pool, allocation_size, 0, &buffer), HSA_STATUS_SUCCESS);
+  ASSERT_NE(buffer, nullptr);
+
+  // The memory is writable regardless of whether udmabuf is available.
+  std::memset(buffer, 0xAB, allocation_size);
+  EXPECT_EQ(static_cast<unsigned char*>(buffer)[allocation_size - 1], 0xAB);
+
+  int dma_buf_fd = -1;
+  std::uint64_t dma_buf_offset = 0;
+  const hsa_status_t st =
+      hsa_amd_portable_export_dmabuf(buffer, allocation_size, &dma_buf_fd, &dma_buf_offset);
+  if (st == HSA_STATUS_ERROR_OUT_OF_RESOURCES) {
+    hsa_amd_memory_pool_free(buffer);
+    hsa_shut_down();
+    GTEST_SKIP() << "/dev/udmabuf unavailable; driver is in mmap fallback mode";
+  }
+  ASSERT_EQ(st, HSA_STATUS_SUCCESS);
+  EXPECT_GT(dma_buf_fd, 0);
+  EXPECT_EQ(dma_buf_offset, 0u);
+
+  EXPECT_EQ(hsa_amd_portable_close_dmabuf(dma_buf_fd), HSA_STATUS_SUCCESS);
+  EXPECT_EQ(hsa_amd_memory_pool_free(buffer), HSA_STATUS_SUCCESS);
   EXPECT_EQ(hsa_shut_down(), HSA_STATUS_SUCCESS);
 }
