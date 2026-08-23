@@ -4001,8 +4001,18 @@ hsa_status_t Runtime::DmaBufExport(const void* ptr, size_t size, int* dmabuf, ui
             return HSA_STATUS_ERROR_INVALID_AGENT;
           case Agent::kAmdAieDevice:
             break;
-          case Agent::kDynamicDevice:
-            return HSA_STATUS_ERROR_INVALID_AGENT;
+          case Agent::kDynamicDevice: {
+            // A dynamic driver owns its own allocations; the KFD thunk below knows
+            // nothing about them. Route the export through the driver interface.
+            Agent* owner = mem->second.region->owner();
+            int fd = -1;
+            hsa_status_t err = owner->driver().ExportMemoryHandle(
+                *owner, mem->second.driver_handle, ShareType::DMABUF_FD, &fd);
+            if (err != HSA_STATUS_SUCCESS) return err;
+            *dmabuf = fd;
+            *offset = uintptr_t(ptr) - uintptr_t(mem->first);
+            return HSA_STATUS_SUCCESS;
+          }
           case Agent::kUnknownDevice:
             return HSA_STATUS_ERROR_INVALID_AGENT;
         }

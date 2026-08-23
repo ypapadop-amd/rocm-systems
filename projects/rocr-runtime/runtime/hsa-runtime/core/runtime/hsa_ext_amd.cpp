@@ -56,6 +56,7 @@
 #include "core/inc/amd_aie_agent.h"
 #include "core/inc/amd_aql_queue.h"
 #include "core/inc/amd_cpu_agent.h"
+#include "core/inc/amd_dynamic_agent.h"
 #include "core/inc/amd_gpu_agent.h"
 #include "core/inc/amd_memory_region.h"
 #include "core/inc/amd_sdma_queue.h"
@@ -1321,6 +1322,14 @@ hsa_status_t hsa_amd_agent_iterate_memory_pools(
         reinterpret_cast<hsa_status_t (*)(hsa_region_t memory_pool,
                                           void *data)>(callback),
         data);
+#if defined(__linux__)
+  case core::Agent::kDynamicDevice:
+    return reinterpret_cast<const AMD::DynamicAgent *>(agent)->VisitRegion(
+        false,
+        reinterpret_cast<hsa_status_t (*)(hsa_region_t memory_pool,
+                                          void *data)>(callback),
+        data);
+#endif
   default:
     return HSA_STATUS_ERROR_INVALID_AGENT;
   }
