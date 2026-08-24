@@ -250,7 +250,14 @@ static void dynaccel_execute(struct dynaccel_queue* q, uint64_t index) {
   } else {
     /* Kernel dispatch / agent dispatch / barrier and/or: DynAccel does not
        execute these, only completes them. A single in-order worker per
-       queue already satisfies barrier semantics. */
+       queue already satisfies barrier semantics.
+
+       This branch also matches HSA_PACKET_TYPE_INVALID (1) and would read a
+       bogus completion signal at offset 56 for it. That is harmless only under
+       the invariant that a submitter never rings the doorbell for a slot whose
+       header is still INVALID -- the doorbell/read_index protocol never asks
+       the worker to execute a slot it hasn't first seen published with a
+       non-INVALID type, so this branch is unreachable for INVALID in practice. */
     completion_signal = dynaccel_standard_completion_signal(p);
   }
 
@@ -323,19 +330,22 @@ static hsa_status_t dynaccel_create_queue(rocr_dynamic_driver_context_t* ctx, ui
   q->read_index = read_index_ptr;
   atomic_store_explicit(&q->run, true, memory_order_relaxed);
 
+  /* Publish q into ctx->queues only after the worker thread exists. The worker never
+     consults ctx->queues, so there is no reason to link q in earlier -- and doing so
+     would make the failure path below racy: a concurrent create_queue could push a new
+     node in front of q between the unlock and the re-lock, and "ctx->queues = q->next"
+     would then drop that node (and leak its thread) instead of unlinking q. Creating the
+     thread before linking removes the race instead of handling it. */
+  if (pthread_create(&q->thread, NULL, dynaccel_worker, q) != 0) {
+    free(q);
+    return HSA_STATUS_ERROR_OUT_OF_RESOURCES;
+  }
+
   pthread_mutex_lock(&ctx->lock);
   q->id = ++ctx->next_id;
   q->next = ctx->queues;
   ctx->queues = q;
   pthread_mutex_unlock(&ctx->lock);
-
-  if (pthread_create(&q->thread, NULL, dynaccel_worker, q) != 0) {
-    pthread_mutex_lock(&ctx->lock);
-    ctx->queues = q->next;
-    pthread_mutex_unlock(&ctx->lock);
-    free(q);
-    return HSA_STATUS_ERROR_OUT_OF_RESOURCES;
-  }
 
   memset(queue_resource, 0, sizeof(*queue_resource));
   queue_resource->QueueId = (HSA_QUEUEID)q->id;

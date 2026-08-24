@@ -112,10 +112,15 @@ TEST(Dispatch, SubmitBarrierPacket) {
   auto* barrier = reinterpret_cast<hsa_barrier_and_packet_t*>(
       static_cast<char*>(queue->base_address) + slot * 64);
   std::memset(barrier, 0, sizeof(*barrier));
-  barrier->header = (HSA_PACKET_TYPE_BARRIER_AND << HSA_PACKET_HEADER_TYPE) |
-                    (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE) |
-                    (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE);
   barrier->completion_signal = completion_signal;
+  // Header last: it publishes the packet to the worker thread, which reads it with an
+  // acquire load. A plain store here would leave completion_signal/dep_signal without a
+  // synchronizes-with edge to the worker's read.
+  const uint16_t barrier_header =
+      (HSA_PACKET_TYPE_BARRIER_AND << HSA_PACKET_HEADER_TYPE) |
+      (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE) |
+      (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE);
+  __atomic_store_n(&barrier->header, barrier_header, __ATOMIC_RELEASE);
 
   hsa_signal_store_screlease(queue->doorbell_signal, static_cast<hsa_signal_value_t>(write_idx));
 
@@ -184,11 +189,16 @@ TEST(Dispatch, SubmitAgentDispatchPacket) {
   auto* agent_pkt = reinterpret_cast<hsa_agent_dispatch_packet_t*>(
       static_cast<char*>(queue->base_address) + slot * 64);
   std::memset(agent_pkt, 0, sizeof(*agent_pkt));
-  agent_pkt->header = (HSA_PACKET_TYPE_AGENT_DISPATCH << HSA_PACKET_HEADER_TYPE) |
-                      (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE) |
-                      (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE);
   agent_pkt->type = 0;
   agent_pkt->completion_signal = completion_signal;
+  // Header last: it publishes the packet to the worker thread, which reads it with an
+  // acquire load. A plain store here would leave completion_signal/dep_signal without a
+  // synchronizes-with edge to the worker's read.
+  const uint16_t agent_header =
+      (HSA_PACKET_TYPE_AGENT_DISPATCH << HSA_PACKET_HEADER_TYPE) |
+      (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE) |
+      (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE);
+  __atomic_store_n(&agent_pkt->header, agent_header, __ATOMIC_RELEASE);
 
   hsa_signal_store_screlease(queue->doorbell_signal, static_cast<hsa_signal_value_t>(write_idx));
 
