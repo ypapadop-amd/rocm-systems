@@ -36,7 +36,9 @@ function(add_dynamic_test name)
       POSITION_INDEPENDENT_CODE   ON
   )
   target_compile_options(${name} PRIVATE -Wall -Wextra -Wpedantic)
-  target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/dynaccel)
+  target_include_directories(${name} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/dynaccel
+    ${ROCR_SOURCE_DIR}/runtime/hsa-runtime)  # dynaccel_packet.h's "inc/hsa.h"
   target_link_libraries(${name} PRIVATE hsa-runtime64::hsa-runtime64 GTest::gtest_main)
 
   add_test(NAME ${name}_nodriver

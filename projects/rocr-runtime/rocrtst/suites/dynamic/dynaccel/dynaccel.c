@@ -8,14 +8,17 @@
 #include <fcntl.h>
 #include <linux/udmabuf.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <time.h>
 #include <unistd.h>
 
+#include "amd_hsa_signal.h"
 #include "core/driver/dynamic/rocr_dynamic_driver.h"
 #include "dynaccel_packet.h"
 
@@ -191,6 +194,175 @@ static hsa_status_t dynaccel_export_memory_handle(rocr_dynamic_driver_context_t*
   return HSA_STATUS_SUCCESS;
 }
 
+/* ---- Queues ---- */
+
+struct dynaccel_queue {
+  uint64_t id;
+  _Alignas(64) uint64_t doorbell;  /* ROCr writes; worker polls */
+  void* ring;
+  uint32_t num_pkts;
+  uint64_t* read_index;            /* -> amd_queue_.read_dispatch_id */
+  atomic_bool run;
+  pthread_t thread;
+  struct dynaccel_queue* next;
+};
+
+/* Completes a signal the way hardware does -- see trap_handler.s send_signal().
+   Never calls into the HSA runtime. */
+static void dynaccel_complete(hsa_signal_t sig) {
+  if (!sig.handle) return;
+  amd_signal_t* s = (amd_signal_t*)(uintptr_t)sig.handle;
+
+  atomic_fetch_sub_explicit((_Atomic int64_t*)&s->value, 1, memory_order_release);
+
+  /* Mirrors the GPU. We cannot raise the interrupt, but every ROCr waiter
+     re-reads value each loop iteration, so the store is always observed. */
+  if (s->event_mailbox_ptr && s->event_id) {
+    atomic_store_explicit((_Atomic uint32_t*)(uintptr_t)s->event_mailbox_ptr, s->event_id,
+                          memory_order_release);
+  }
+}
+
+/* Every standard AQL packet (kernel dispatch, agent dispatch, barrier and/or)
+   places its completion signal in the last 8 bytes of the 64-byte packet.
+   DynAccel's own dispatch packet (type DYNACCEL_PACKET_TYPE_READY) does not
+   follow that convention -- see dynaccel_dispatch_packet_t -- so its
+   completion_signal field must be read separately. */
+static hsa_signal_t dynaccel_standard_completion_signal(const void* pkt) {
+  hsa_signal_t sig;
+  memcpy(&sig, (const char*)pkt + 64 - sizeof(sig), sizeof(sig));
+  return sig;
+}
+
+static void dynaccel_execute(struct dynaccel_queue* q, uint64_t index) {
+  dynaccel_dispatch_packet_t* p =
+      &((dynaccel_dispatch_packet_t*)q->ring)[index % q->num_pkts];
+
+  const uint16_t header = __atomic_load_n(&p->header, __ATOMIC_ACQUIRE);
+  const uint16_t type = (header >> HSA_PACKET_HEADER_TYPE) & 0xFF;
+
+  hsa_signal_t completion_signal;
+  if (type == DYNACCEL_PACKET_TYPE_READY) {
+    completion_signal = p->completion_signal;
+    if (p->opcode == DYNACCEL_OPCODE_DISPATCH && p->function) {
+      ((dynaccel_kernel_t)(uintptr_t)p->function)((uint64_t*)p->kernarg_address, p->num_kernargs);
+    }
+  } else {
+    /* Kernel dispatch / agent dispatch / barrier and/or: DynAccel does not
+       execute these, only completes them. A single in-order worker per
+       queue already satisfies barrier semantics. */
+    completion_signal = dynaccel_standard_completion_signal(p);
+  }
+
+  dynaccel_complete(completion_signal);
+  __atomic_store_n(&p->header,
+                   (uint16_t)(DYNACCEL_PACKET_TYPE_INVALID << HSA_PACKET_HEADER_TYPE),
+                   __ATOMIC_RELEASE);
+}
+
+static void dynaccel_backoff(int* idle) {
+  if (++(*idle) < 64) {
+    sched_yield();
+  } else {
+    const struct timespec ts = {.tv_sec = 0, .tv_nsec = 50000};  /* 50 us */
+    nanosleep(&ts, NULL);
+  }
+}
+
+static void* dynaccel_worker(void* arg) {
+  struct dynaccel_queue* q = (struct dynaccel_queue*)arg;
+  int idle = 0;
+
+  while (atomic_load_explicit(&q->run, memory_order_relaxed)) {
+    /* The doorbell holds the index of the LAST packet written, so the ring is
+       non-empty when db + 1 > read_index. Comparing against read_index rather
+       than a cached doorbell is what makes the very first doorbell -- value 0,
+       for the packet in slot 0 -- observable. */
+    const uint64_t rd =
+        atomic_load_explicit((_Atomic uint64_t*)q->read_index, memory_order_relaxed);
+    const uint64_t db =
+        atomic_load_explicit((_Atomic uint64_t*)&q->doorbell, memory_order_acquire);
+
+    if ((int64_t)(db + 1 - rd) <= 0) {
+      dynaccel_backoff(&idle);
+      continue;
+    }
+    idle = 0;
+
+    for (uint64_t i = rd; i <= db; ++i) {
+      dynaccel_execute(q, i);
+      atomic_store_explicit((_Atomic uint64_t*)q->read_index, i + 1, memory_order_release);
+    }
+  }
+  return NULL;
+}
+
+static hsa_status_t dynaccel_create_queue(rocr_dynamic_driver_context_t* ctx, uint32_t node_id,
+                                          uint32_t type, uint32_t queue_pct, uint32_t priority,
+                                          uint32_t sdma_engine_id, void* queue_addr,
+                                          uint64_t queue_size_bytes, uint64_t* read_index_ptr,
+                                          uint64_t queue_metadata_size_bytes, HsaEvent* event,
+                                          HsaQueueResource* queue_resource) {
+  (void)type; (void)queue_pct; (void)priority; (void)sdma_engine_id;
+  (void)queue_metadata_size_bytes; (void)event;
+  if (!ctx || !queue_addr || !read_index_ptr || !queue_resource || node_id != 0) {
+    return HSA_STATUS_ERROR_INVALID_ARGUMENT;
+  }
+
+  const uint64_t num_pkts = queue_size_bytes / sizeof(dynaccel_dispatch_packet_t);
+  if (num_pkts == 0 || (num_pkts & (num_pkts - 1)) != 0) {
+    return HSA_STATUS_ERROR_INVALID_QUEUE_CREATION;
+  }
+
+  struct dynaccel_queue* q = calloc(1, sizeof(*q));
+  if (!q) return HSA_STATUS_ERROR_OUT_OF_RESOURCES;
+
+  q->doorbell = UINT64_MAX;   /* empty: db + 1 == read_index == 0 */
+  q->ring = queue_addr;
+  q->num_pkts = (uint32_t)num_pkts;
+  q->read_index = read_index_ptr;
+  atomic_store_explicit(&q->run, true, memory_order_relaxed);
+
+  pthread_mutex_lock(&ctx->lock);
+  q->id = ++ctx->next_id;
+  q->next = ctx->queues;
+  ctx->queues = q;
+  pthread_mutex_unlock(&ctx->lock);
+
+  if (pthread_create(&q->thread, NULL, dynaccel_worker, q) != 0) {
+    pthread_mutex_lock(&ctx->lock);
+    ctx->queues = q->next;
+    pthread_mutex_unlock(&ctx->lock);
+    free(q);
+    return HSA_STATUS_ERROR_OUT_OF_RESOURCES;
+  }
+
+  memset(queue_resource, 0, sizeof(*queue_resource));
+  queue_resource->QueueId = (HSA_QUEUEID)q->id;
+  queue_resource->Queue_DoorBell_aql = &q->doorbell;
+  queue_resource->Queue_read_ptr_aql = read_index_ptr;
+  return HSA_STATUS_SUCCESS;
+}
+
+static hsa_status_t dynaccel_destroy_queue(rocr_dynamic_driver_context_t* ctx,
+                                           uint64_t queue_id) {
+  if (!ctx) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
+
+  pthread_mutex_lock(&ctx->lock);
+  struct dynaccel_queue** link = &ctx->queues;
+  while (*link && (*link)->id != queue_id) link = &(*link)->next;
+  struct dynaccel_queue* q = *link;
+  if (q) *link = q->next;
+  pthread_mutex_unlock(&ctx->lock);
+
+  if (!q) return HSA_STATUS_ERROR_INVALID_QUEUE;
+
+  atomic_store_explicit(&q->run, false, memory_order_release);
+  pthread_join(q->thread, NULL);
+  free(q);
+  return HSA_STATUS_SUCCESS;
+}
+
 /* ---- Topology ---- */
 
 static hsa_status_t dynaccel_get_system_properties(rocr_dynamic_driver_context_t* ctx,
@@ -271,6 +443,18 @@ static hsa_status_t dynaccel_get_agent_properties(rocr_dynamic_driver_context_t*
 
 static void dynaccel_destroy_context(rocr_dynamic_driver_context_t* ctx) {
   if (!ctx) return;
+
+  /* Callers are expected to destroy every queue before tearing down the
+     context, but stop any that are still running here so a missed
+     destroy_queue call cannot leak a worker thread past this point. */
+  while (ctx->queues) {
+    struct dynaccel_queue* q = ctx->queues;
+    ctx->queues = q->next;
+    atomic_store_explicit(&q->run, false, memory_order_release);
+    pthread_join(q->thread, NULL);
+    free(q);
+  }
+
   if (ctx->udmabuf_fd >= 0) close(ctx->udmabuf_fd);
   pthread_mutex_destroy(&ctx->lock);
   free(ctx);
@@ -291,6 +475,8 @@ static rocr_dynamic_driver_ftable_t g_ftable = {
     .allocate_memory = dynaccel_allocate_memory,
     .free_memory = dynaccel_free_memory,
     .export_memory_handle = dynaccel_export_memory_handle,
+    .create_queue = dynaccel_create_queue,
+    .destroy_queue = dynaccel_destroy_queue,
     .destroy_context = dynaccel_destroy_context,
 };
 
