@@ -8,8 +8,8 @@
 #define ROCR_DYNAMIC_DRIVER_H_
 
 #include "hsakmt/hsakmttypes.h"
-#include "inc/hsa.h"
-#include "inc/hsa_ext_amd.h"
+#include "hsa.h"
+#include "hsa_ext_amd.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -70,7 +70,9 @@ typedef struct rocr_dynamic_driver_agent_props_t {
   char     name[64];
   char     vendor_name[64];
   char     product_name[64];
-  char     uuid[24];
+  /** Ascii string, max 21 chars including NUL (see HSA_AMD_AGENT_INFO_UUID
+   *  in hsa_ext_amd.h). Left empty ("") to use the "DYN-XX" fallback. */
+  char     uuid[21];
   uint32_t wavefront_size;
   uint16_t workgroup_max_dim[3];
   uint32_t workgroup_max_size;

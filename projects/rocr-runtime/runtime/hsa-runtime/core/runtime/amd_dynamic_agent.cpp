@@ -223,9 +223,15 @@ hsa_status_t DynamicAgent::GetInfo(hsa_agent_info_t attribute, void* value) cons
       std::copy_n(node_props_.MarketingName, HSA_PUBLIC_NAME_SIZE, static_cast<char*>(value));
       break;
     case HSA_AMD_AGENT_INFO_UUID: {
+      // HSA_AMD_AGENT_INFO_UUID is documented (hsa_ext_amd.h) as an Ascii
+      // string with a maximum of 21 chars including NUL. Bound the copy by
+      // that contract, not by the size of props_.uuid, so callers that
+      // allocated exactly 21 bytes are never overrun.
+      constexpr size_t kUuidMaxLen = 21;
       auto ptr = static_cast<char*>(value);
-      std::strncpy(ptr, props_.uuid[0] ? props_.uuid : "DYN-XX", sizeof(props_.uuid));
-      ptr[sizeof(props_.uuid) - 1] = '\0';
+      const char* src = props_.uuid[0] ? props_.uuid : "DYN-XX";
+      std::strncpy(ptr, src, kUuidMaxLen - 1);
+      ptr[kUuidMaxLen - 1] = '\0';
       break;
     }
     case HSA_AMD_AGENT_INFO_ASIC_REVISION:

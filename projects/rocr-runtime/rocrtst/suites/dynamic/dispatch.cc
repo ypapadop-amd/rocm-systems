@@ -153,6 +153,32 @@ TEST(DynAccel, AgentDiscovered) {
             HSA_STATUS_SUCCESS);
   EXPECT_STREQ(product_name, "DynAccel");
 
+  // HSA_AMD_AGENT_INFO_UUID is documented (hsa_ext_amd.h) as an Ascii string
+  // with a maximum of 21 chars including NUL. Query into an exactly
+  // 21-byte buffer flanked by guard bytes to catch any write past it.
+  struct {
+    char guard_before[8];
+    char uuid[21];
+    char guard_after[8];
+  } uuid_buf;
+  std::memset(uuid_buf.guard_before, 0xAB, sizeof(uuid_buf.guard_before));
+  std::memset(uuid_buf.uuid, 0xCD, sizeof(uuid_buf.uuid));
+  std::memset(uuid_buf.guard_after, 0xAB, sizeof(uuid_buf.guard_after));
+
+  char guard_before_expected[8];
+  char guard_after_expected[8];
+  std::memset(guard_before_expected, 0xAB, sizeof(guard_before_expected));
+  std::memset(guard_after_expected, 0xAB, sizeof(guard_after_expected));
+
+  ASSERT_EQ(hsa_agent_get_info(dynamic_agents.front(),
+                               static_cast<hsa_agent_info_t>(HSA_AMD_AGENT_INFO_UUID),
+                               uuid_buf.uuid),
+            HSA_STATUS_SUCCESS);
+  EXPECT_EQ(std::memcmp(uuid_buf.guard_before, guard_before_expected, sizeof(guard_before_expected)),
+            0);
+  EXPECT_EQ(std::memcmp(uuid_buf.guard_after, guard_after_expected, sizeof(guard_after_expected)), 0);
+  EXPECT_STREQ(uuid_buf.uuid, "DYN-00000000");
+
   uint32_t queue_max_size = 0;
   ASSERT_EQ(hsa_agent_get_info(dynamic_agents.front(), HSA_AGENT_INFO_QUEUE_MAX_SIZE,
                                &queue_max_size),
