@@ -141,6 +141,18 @@ static struct dynaccel_alloc* dynaccel_find_alloc(rocr_dynamic_driver_context_t*
   return NULL;
 }
 
+/* Imported allocations are keyed by id rather than ptr: at import time the
+ * destination VA is not known yet (it is supplied later by map()), so ptr
+ * cannot serve as the lookup key the way it does for locally-owned
+ * allocations. Caller must hold ctx->lock. */
+static struct dynaccel_alloc* dynaccel_find_alloc_by_id(rocr_dynamic_driver_context_t* ctx,
+                                                        uint64_t id) {
+  for (struct dynaccel_alloc* a = ctx->allocs; a; a = a->next) {
+    if (a->id == id) return a;
+  }
+  return NULL;
+}
+
 /* Unlinks under ctx->lock, then munmaps/closes/frees outside it - so a
  * concurrent export_memory_handle that has already read a->dmabuf_fd could
  * in principle dup() an fd number this call is about to close and the
@@ -184,8 +196,13 @@ static hsa_status_t dynaccel_export_memory_handle(rocr_dynamic_driver_context_t*
   if (!ctx || !handle || !export_handle) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
   if (share_type != ROCR_DYNAMIC_SHARE_DMABUF_FD) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
 
+  /* Locally-owned allocations are keyed by ptr (handle->handle == ptr);
+   * imported allocations are keyed by id instead (see import_memory_handle),
+   * so a handle produced by import_memory_handle must be looked up by id to
+   * support re-exporting it. */
   pthread_mutex_lock(&ctx->lock);
   struct dynaccel_alloc* a = dynaccel_find_alloc(ctx, (void*)(uintptr_t)handle->handle);
+  if (!a) a = dynaccel_find_alloc_by_id(ctx, handle->handle);
   const int fd = a ? a->dmabuf_fd : -1;
   pthread_mutex_unlock(&ctx->lock);
 
@@ -195,6 +212,49 @@ static hsa_status_t dynaccel_export_memory_handle(rocr_dynamic_driver_context_t*
   const int dup_fd = dup(fd);
   if (dup_fd < 0) return HSA_STATUS_ERROR_OUT_OF_RESOURCES;
   *(int*)export_handle = dup_fd;
+  return HSA_STATUS_SUCCESS;
+}
+
+/* Imports only DMABUF_FD handles: FABRIC_HANDLE sharing is cross-node and this
+ * driver only ever runs within a single machine. The imported allocation gets
+ * its own dynaccel_alloc entry, keyed by a freshly assigned id rather than by
+ * ptr, since the destination VA is not known until a later map() call (mem is
+ * always NULL on the runtime's actual call path; the "bypass import" case
+ * documented in the header is honored by recording mem as the ptr directly). */
+static hsa_status_t dynaccel_import_memory_handle(rocr_dynamic_driver_context_t* ctx,
+                                                  uint32_t node_id,
+                                                  rocr_dynamic_driver_memory_handle_t* handle,
+                                                  int share_type, void* import_handle, void* mem) {
+  (void)node_id;
+  if (!ctx || !handle || !import_handle) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
+  if (share_type != ROCR_DYNAMIC_SHARE_DMABUF_FD) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
+
+  const rocr_dynamic_driver_memory_handle_t* src = import_handle;
+  if (src->dmabuf_fd < 0) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
+
+  const int dup_fd = dup(src->dmabuf_fd);
+  if (dup_fd < 0) return HSA_STATUS_ERROR_OUT_OF_RESOURCES;
+
+  struct dynaccel_alloc* a = calloc(1, sizeof(*a));
+  if (!a) {
+    close(dup_fd);
+    return HSA_STATUS_ERROR_OUT_OF_RESOURCES;
+  }
+
+  pthread_mutex_lock(&ctx->lock);
+  a->id = ++ctx->next_id;
+  a->dmabuf_fd = dup_fd;
+  a->ptr = mem;
+  a->size = src->size;
+  a->next = ctx->allocs;
+  ctx->allocs = a;
+  pthread_mutex_unlock(&ctx->lock);
+
+  *handle = (rocr_dynamic_driver_memory_handle_t){0};
+  handle->handle = a->id;
+  handle->vaddr = mem;
+  handle->dmabuf_fd = dup_fd;
+  handle->size = a->size;
   return HSA_STATUS_SUCCESS;
 }
 
@@ -219,17 +279,110 @@ static hsa_status_t dynaccel_create_shareable_handle(rocr_dynamic_driver_context
   return HSA_STATUS_SUCCESS;
 }
 
+static int dynaccel_perms_to_prot(int perms) {
+  int prot = PROT_NONE;
+  if (perms & HSA_ACCESS_PERMISSION_RO) prot |= PROT_READ;
+  if (perms & HSA_ACCESS_PERMISSION_RW) prot |= PROT_WRITE;
+  return prot;
+}
+
+/* Maps a slice of an imported allocation's dmabuf at the caller-chosen VA.
+ * mem is always a page inside a VA range the runtime already reserved
+ * (PROT_NONE, MAP_ANONYMOUS) before calling map(), so MAP_FIXED here only
+ * ever replaces that reservation's own mapping - never a foreign one. */
+static hsa_status_t dynaccel_map(rocr_dynamic_driver_context_t* ctx, uint32_t node_id,
+                                 const rocr_dynamic_driver_memory_handle_t* handle, void* mem,
+                                 size_t offset, size_t size, int perms) {
+  (void)node_id;
+  if (!ctx || !handle || !mem || size == 0) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
+
+  pthread_mutex_lock(&ctx->lock);
+  struct dynaccel_alloc* a = dynaccel_find_alloc_by_id(ctx, handle->handle);
+  const int fd = a ? a->dmabuf_fd : -1;
+  const size_t alloc_size = a ? a->size : 0;
+  pthread_mutex_unlock(&ctx->lock);
+  if (!a) return HSA_STATUS_ERROR_INVALID_ALLOCATION;
+  if (fd < 0) return HSA_STATUS_ERROR_INVALID_ALLOCATION;
+  if (offset > alloc_size || size > alloc_size - offset) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
+
+  if (mmap(mem, size, dynaccel_perms_to_prot(perms), MAP_SHARED | MAP_FIXED, fd,
+           (off_t)offset) == MAP_FAILED) {
+    return HSA_STATUS_ERROR;
+  }
+
+  pthread_mutex_lock(&ctx->lock);
+  a->ptr = mem;
+  pthread_mutex_unlock(&ctx->lock);
+  return HSA_STATUS_SUCCESS;
+}
+
+/* Restores the PROT_NONE/anonymous mapping the runtime's VA reservation had
+ * before map() overwrote it with the dmabuf mapping, rather than leaving a
+ * bare hole behind: mirrors the CPU-agent path (RemoveAccess() -> mprotect
+ * PROT_NONE) which preserves the reservation for a later re-map instead of
+ * releasing the address range. */
+static hsa_status_t dynaccel_unmap(rocr_dynamic_driver_context_t* ctx, uint32_t node_id,
+                                   const rocr_dynamic_driver_memory_handle_t* handle, void* mem,
+                                   size_t offset, size_t size) {
+  (void)node_id;
+  if (!ctx || !handle || !mem || size == 0) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
+
+  pthread_mutex_lock(&ctx->lock);
+  struct dynaccel_alloc* a = dynaccel_find_alloc_by_id(ctx, handle->handle);
+  const size_t alloc_size = a ? a->size : 0;
+  pthread_mutex_unlock(&ctx->lock);
+  if (!a) return HSA_STATUS_ERROR_INVALID_ALLOCATION;
+  if (offset > alloc_size || size > alloc_size - offset) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
+
+  if (mmap(mem, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED) {
+    return HSA_STATUS_ERROR;
+  }
+
+  pthread_mutex_lock(&ctx->lock);
+  a->ptr = NULL;
+  pthread_mutex_unlock(&ctx->lock);
+  return HSA_STATUS_SUCCESS;
+}
+
+/* Imported allocations are keyed by id (see import_memory_handle above), so
+ * they cannot go through dynaccel_unlink_and_release's ptr-based lookup -
+ * this is the id-keyed equivalent. Guards the munmap on ptr being set since
+ * a handle destroyed before any map() call was ever made has none. */
+static hsa_status_t dynaccel_unlink_and_release_by_id(rocr_dynamic_driver_context_t* ctx,
+                                                      uint64_t id) {
+  pthread_mutex_lock(&ctx->lock);
+  struct dynaccel_alloc** link = &ctx->allocs;
+  while (*link && (*link)->id != id) link = &(*link)->next;
+  struct dynaccel_alloc* a = *link;
+  if (a) *link = a->next;
+  pthread_mutex_unlock(&ctx->lock);
+
+  if (!a) return HSA_STATUS_ERROR_INVALID_ALLOCATION;
+
+  if (a->ptr) munmap(a->ptr, a->size);
+  if (a->dmabuf_fd >= 0) close(a->dmabuf_fd);
+  free(a);
+  return HSA_STATUS_SUCCESS;
+}
+
 /* Because create_shareable_handle above never allocates a separate resource,
  * this is the sole teardown path for VMem-created handles (they are never
  * passed to free_memory) - so it must release the same allocation
  * free_memory would. See the race note above free_memory: the same
- * unlink-then-release ordering applies here. */
+ * unlink-then-release ordering applies here. Also handles import_memory_handle
+ * handles, which are id-keyed rather than ptr-keyed - see
+ * dynaccel_find_alloc_by_id. */
 static hsa_status_t dynaccel_destroy_memory_handle(rocr_dynamic_driver_context_t* ctx,
                                                    rocr_dynamic_driver_memory_handle_t* handle) {
   if (!ctx || !handle) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
 
-  const hsa_status_t status =
-      dynaccel_unlink_and_release(ctx, (void*)(uintptr_t)handle->handle);
+  pthread_mutex_lock(&ctx->lock);
+  const bool is_import = dynaccel_find_alloc_by_id(ctx, handle->handle) != NULL;
+  pthread_mutex_unlock(&ctx->lock);
+
+  const hsa_status_t status = is_import
+      ? dynaccel_unlink_and_release_by_id(ctx, handle->handle)
+      : dynaccel_unlink_and_release(ctx, (void*)(uintptr_t)handle->handle);
   if (status != HSA_STATUS_SUCCESS) return status;
 
   *handle = (rocr_dynamic_driver_memory_handle_t){0};
@@ -514,6 +667,18 @@ static void dynaccel_destroy_context(rocr_dynamic_driver_context_t* ctx) {
     free(q);
   }
 
+  /* Callers are expected to free/destroy every allocation before tearing down
+     the context, but release any still-registered ones here so a missed
+     free_memory/destroy_memory_handle call cannot leak a udmabuf fd or
+     mapping past this point. */
+  while (ctx->allocs) {
+    struct dynaccel_alloc* a = ctx->allocs;
+    ctx->allocs = a->next;
+    if (a->ptr) munmap(a->ptr, a->size);
+    if (a->dmabuf_fd >= 0) close(a->dmabuf_fd);
+    free(a);
+  }
+
   if (ctx->udmabuf_fd >= 0) close(ctx->udmabuf_fd);
   pthread_mutex_destroy(&ctx->lock);
   free(ctx);
@@ -534,6 +699,9 @@ static rocr_dynamic_driver_ftable_t g_ftable = {
     .allocate_memory = dynaccel_allocate_memory,
     .free_memory = dynaccel_free_memory,
     .export_memory_handle = dynaccel_export_memory_handle,
+    .import_memory_handle = dynaccel_import_memory_handle,
+    .map = dynaccel_map,
+    .unmap = dynaccel_unmap,
     .create_shareable_handle = dynaccel_create_shareable_handle,
     .destroy_memory_handle = dynaccel_destroy_memory_handle,
     .create_queue = dynaccel_create_queue,
