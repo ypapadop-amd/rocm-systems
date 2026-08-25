@@ -18,6 +18,21 @@
 
 using rocrtst::discover_agents;
 
+namespace {
+
+hsa_queue_t* CreateDynAccelQueue(hsa_agent_t agent) {
+  uint32_t queue_max_size = 0;
+  EXPECT_EQ(hsa_agent_get_info(agent, HSA_AGENT_INFO_QUEUE_MAX_SIZE, &queue_max_size),
+            HSA_STATUS_SUCCESS);
+  hsa_queue_t* queue = nullptr;
+  EXPECT_EQ(hsa_queue_create(agent, queue_max_size, HSA_QUEUE_TYPE_SINGLE, nullptr, nullptr,
+                             UINT32_MAX, UINT32_MAX, &queue),
+            HSA_STATUS_SUCCESS);
+  return queue;
+}
+
+}  // namespace
+
 TEST(Dispatch, NoDynamicDriver) {
   ASSERT_EQ(hsa_init(), HSA_STATUS_SUCCESS);
 
@@ -43,10 +58,7 @@ TEST(Dispatch, CreateQueue) {
             HSA_STATUS_SUCCESS);
   ASSERT_GT(queue_max_size, 0u);
 
-  hsa_queue_t* queue = nullptr;
-  ASSERT_EQ(hsa_queue_create(dynamic_agents.front(), queue_max_size, HSA_QUEUE_TYPE_SINGLE,
-                             nullptr, nullptr, UINT32_MAX, UINT32_MAX, &queue),
-            HSA_STATUS_SUCCESS);
+  hsa_queue_t* queue = CreateDynAccelQueue(dynamic_agents.front());
   ASSERT_NE(queue, nullptr);
   EXPECT_EQ(queue->type, HSA_QUEUE_TYPE_SINGLE);
   EXPECT_EQ(queue->size, queue_max_size);
@@ -63,18 +75,11 @@ TEST(Dispatch, CreateDestroyMultipleQueues) {
             HSA_STATUS_SUCCESS);
   ASSERT_FALSE(dynamic_agents.empty());
 
-  uint32_t queue_max_size = 0;
-  ASSERT_EQ(hsa_agent_get_info(dynamic_agents.front(), HSA_AGENT_INFO_QUEUE_MAX_SIZE,
-                               &queue_max_size),
-            HSA_STATUS_SUCCESS);
-
   constexpr int num_queues = 4;
   std::vector<hsa_queue_t*> queues(num_queues, nullptr);
 
   for (int i = 0; i < num_queues; ++i) {
-    ASSERT_EQ(hsa_queue_create(dynamic_agents.front(), queue_max_size, HSA_QUEUE_TYPE_SINGLE,
-                               nullptr, nullptr, UINT32_MAX, UINT32_MAX, &queues[i]),
-              HSA_STATUS_SUCCESS);
+    queues[i] = CreateDynAccelQueue(dynamic_agents.front());
     ASSERT_NE(queues[i], nullptr);
   }
 
@@ -93,15 +98,8 @@ TEST(Dispatch, SubmitBarrierPacket) {
             HSA_STATUS_SUCCESS);
   ASSERT_FALSE(dynamic_agents.empty());
 
-  uint32_t queue_max_size = 0;
-  ASSERT_EQ(hsa_agent_get_info(dynamic_agents.front(), HSA_AGENT_INFO_QUEUE_MAX_SIZE,
-                               &queue_max_size),
-            HSA_STATUS_SUCCESS);
-
-  hsa_queue_t* queue = nullptr;
-  ASSERT_EQ(hsa_queue_create(dynamic_agents.front(), queue_max_size, HSA_QUEUE_TYPE_SINGLE,
-                             nullptr, nullptr, UINT32_MAX, UINT32_MAX, &queue),
-            HSA_STATUS_SUCCESS);
+  hsa_queue_t* queue = CreateDynAccelQueue(dynamic_agents.front());
+  ASSERT_NE(queue, nullptr);
 
   hsa_signal_t completion_signal = {};
   ASSERT_EQ(hsa_signal_create(1, 0, nullptr, &completion_signal), HSA_STATUS_SUCCESS);
@@ -196,15 +194,8 @@ TEST(Dispatch, SubmitAgentDispatchPacket) {
             HSA_STATUS_SUCCESS);
   ASSERT_FALSE(dynamic_agents.empty());
 
-  uint32_t queue_max_size = 0;
-  ASSERT_EQ(hsa_agent_get_info(dynamic_agents.front(), HSA_AGENT_INFO_QUEUE_MAX_SIZE,
-                               &queue_max_size),
-            HSA_STATUS_SUCCESS);
-
-  hsa_queue_t* queue = nullptr;
-  ASSERT_EQ(hsa_queue_create(dynamic_agents.front(), queue_max_size, HSA_QUEUE_TYPE_SINGLE,
-                             nullptr, nullptr, UINT32_MAX, UINT32_MAX, &queue),
-            HSA_STATUS_SUCCESS);
+  hsa_queue_t* queue = CreateDynAccelQueue(dynamic_agents.front());
+  ASSERT_NE(queue, nullptr);
 
   hsa_signal_t completion_signal = {};
   ASSERT_EQ(hsa_signal_create(1, 0, nullptr, &completion_signal), HSA_STATUS_SUCCESS);
@@ -277,17 +268,6 @@ hsa_signal_t EnqueueDispatch(hsa_queue_t* queue, dynaccel_kernel_t fn, uint64_t*
   hsa_signal_store_screlease(queue->doorbell_signal,
                              static_cast<hsa_signal_value_t>(write_idx));
   return signal;
-}
-
-hsa_queue_t* CreateDynAccelQueue(hsa_agent_t agent) {
-  uint32_t queue_max_size = 0;
-  EXPECT_EQ(hsa_agent_get_info(agent, HSA_AGENT_INFO_QUEUE_MAX_SIZE, &queue_max_size),
-            HSA_STATUS_SUCCESS);
-  hsa_queue_t* queue = nullptr;
-  EXPECT_EQ(hsa_queue_create(agent, queue_max_size, HSA_QUEUE_TYPE_SINGLE, nullptr, nullptr,
-                             UINT32_MAX, UINT32_MAX, &queue),
-            HSA_STATUS_SUCCESS);
-  return queue;
 }
 
 }  // namespace

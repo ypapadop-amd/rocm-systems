@@ -150,12 +150,10 @@ static struct dynaccel_alloc* dynaccel_find_alloc(rocr_dynamic_driver_context_t*
  * that lock exclusively before it can reach this function. A driver copying
  * this pattern for a caller that does not offer the same guarantee must
  * refcount the allocation instead, so a free cannot complete while an
- * export still holds a reference to it. */
-static hsa_status_t dynaccel_free_memory(rocr_dynamic_driver_context_t* ctx, void* mem,
-                                         size_t size) {
-  (void)size;
-  if (!ctx || !mem) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
-
+ * export still holds a reference to it. Shared by free_memory and
+ * destroy_memory_handle, which differ only in whose allocation table entry
+ * they release. */
+static hsa_status_t dynaccel_unlink_and_release(rocr_dynamic_driver_context_t* ctx, void* mem) {
   pthread_mutex_lock(&ctx->lock);
   struct dynaccel_alloc** link = &ctx->allocs;
   while (*link && (*link)->ptr != mem) link = &(*link)->next;
@@ -169,6 +167,13 @@ static hsa_status_t dynaccel_free_memory(rocr_dynamic_driver_context_t* ctx, voi
   if (a->dmabuf_fd >= 0) close(a->dmabuf_fd);
   free(a);
   return HSA_STATUS_SUCCESS;
+}
+
+static hsa_status_t dynaccel_free_memory(rocr_dynamic_driver_context_t* ctx, void* mem,
+                                         size_t size) {
+  (void)size;
+  if (!ctx || !mem) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
+  return dynaccel_unlink_and_release(ctx, mem);
 }
 
 static hsa_status_t dynaccel_export_memory_handle(rocr_dynamic_driver_context_t* ctx,
@@ -223,20 +228,9 @@ static hsa_status_t dynaccel_destroy_memory_handle(rocr_dynamic_driver_context_t
                                                    rocr_dynamic_driver_memory_handle_t* handle) {
   if (!ctx || !handle) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
 
-  void* const mem = (void*)(uintptr_t)handle->handle;
-
-  pthread_mutex_lock(&ctx->lock);
-  struct dynaccel_alloc** link = &ctx->allocs;
-  while (*link && (*link)->ptr != mem) link = &(*link)->next;
-  struct dynaccel_alloc* a = *link;
-  if (a) *link = a->next;
-  pthread_mutex_unlock(&ctx->lock);
-
-  if (!a) return HSA_STATUS_ERROR_INVALID_ALLOCATION;
-
-  munmap(a->ptr, a->size);
-  if (a->dmabuf_fd >= 0) close(a->dmabuf_fd);
-  free(a);
+  const hsa_status_t status =
+      dynaccel_unlink_and_release(ctx, (void*)(uintptr_t)handle->handle);
+  if (status != HSA_STATUS_SUCCESS) return status;
 
   *handle = (rocr_dynamic_driver_memory_handle_t){0};
   return HSA_STATUS_SUCCESS;
@@ -494,6 +488,9 @@ static hsa_status_t dynaccel_get_agent_properties(rocr_dynamic_driver_context_t*
   props->max_clock_frequency = 1000;
   props->profile = (uint8_t)HSA_PROFILE_BASE;
   props->default_float_rounding_mode = (uint8_t)HSA_DEFAULT_FLOAT_ROUNDING_MODE_NEAR;
+  /* dynaccel packets are agent-dispatch, delivered one at a time per queue. */
+  props->feature = (uint8_t)HSA_AGENT_FEATURE_AGENT_DISPATCH;
+  props->queue_type = (uint8_t)HSA_QUEUE_TYPE_SINGLE;
   return HSA_STATUS_SUCCESS;
 }
 
@@ -504,11 +501,15 @@ static void dynaccel_destroy_context(rocr_dynamic_driver_context_t* ctx) {
 
   /* Callers are expected to destroy every queue before tearing down the
      context, but stop any that are still running here so a missed
-     destroy_queue call cannot leak a worker thread past this point. */
+     destroy_queue call cannot leak a worker thread past this point. Signal
+     every worker to stop before joining any of them, so their backoff
+     windows overlap instead of stacking one after another. */
+  for (struct dynaccel_queue* q = ctx->queues; q; q = q->next) {
+    atomic_store_explicit(&q->run, false, memory_order_release);
+  }
   while (ctx->queues) {
     struct dynaccel_queue* q = ctx->queues;
     ctx->queues = q->next;
-    atomic_store_explicit(&q->run, false, memory_order_release);
     pthread_join(q->thread, NULL);
     free(q);
   }

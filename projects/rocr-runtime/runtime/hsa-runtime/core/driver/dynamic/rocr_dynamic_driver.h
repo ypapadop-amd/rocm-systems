@@ -90,7 +90,14 @@ typedef struct rocr_dynamic_driver_agent_props_t {
   uint32_t asic_revision;
   uint8_t  profile;                     /**< hsa_profile_t */
   uint8_t  default_float_rounding_mode; /**< hsa_default_float_rounding_mode_t */
-  uint8_t  reserved[2];
+  /** hsa_agent_feature_t. Left 0 (an invalid value) to use the runtime's
+   *  HSA_AGENT_FEATURE_AGENT_DISPATCH fallback. */
+  uint8_t  feature;
+  /** hsa_queue_type32_t. Left 0 to use the runtime's HSA_QUEUE_TYPE_SINGLE
+   *  fallback (note 0 is also the value of HSA_QUEUE_TYPE_MULTI, so a driver
+   *  that wants MULTI must implement get_agent_properties and set this
+   *  field explicitly rather than relying on a zeroed struct). */
+  uint8_t  queue_type;
 } rocr_dynamic_driver_agent_props_t;
 
 /**

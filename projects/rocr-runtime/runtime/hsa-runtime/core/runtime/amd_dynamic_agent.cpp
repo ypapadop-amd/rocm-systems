@@ -34,6 +34,8 @@ DynamicAgent::DynamicAgent(uint32_t node, const HsaNodeProperties& node_props)
   props_.queues_max = 1;
   props_.profile = HSA_PROFILE_BASE;
   props_.default_float_rounding_mode = HSA_DEFAULT_FLOAT_ROUNDING_MODE_NEAR;
+  props_.feature = HSA_AGENT_FEATURE_AGENT_DISPATCH;
+  props_.queue_type = HSA_QUEUE_TYPE_SINGLE;
   static_cast<DynamicDriver&>(driver()).GetAgentProperties(node, &props_);
 
   InitRegionList();
@@ -120,7 +122,7 @@ hsa_status_t DynamicAgent::GetInfo(hsa_agent_info_t attribute, void* value) cons
       break;
     }
     case HSA_AGENT_INFO_FEATURE:
-      *static_cast<hsa_agent_feature_t*>(value) = HSA_AGENT_FEATURE_AGENT_DISPATCH;
+      *static_cast<hsa_agent_feature_t*>(value) = static_cast<hsa_agent_feature_t>(props_.feature);
       break;
     case HSA_AGENT_INFO_MACHINE_MODEL:
       *static_cast<hsa_machine_model_t*>(value) = HSA_MACHINE_MODEL_LARGE;
@@ -161,7 +163,7 @@ hsa_status_t DynamicAgent::GetInfo(hsa_agent_info_t attribute, void* value) cons
       *static_cast<uint32_t*>(value) = props_.queue_max_size;
       break;
     case HSA_AGENT_INFO_QUEUE_TYPE:
-      *static_cast<hsa_queue_type32_t*>(value) = HSA_QUEUE_TYPE_SINGLE;
+      *static_cast<hsa_queue_type32_t*>(value) = static_cast<hsa_queue_type32_t>(props_.queue_type);
       break;
     case HSA_AGENT_INFO_NODE:
       *static_cast<uint32_t*>(value) = node_id();
@@ -244,9 +246,19 @@ hsa_status_t DynamicAgent::GetInfo(hsa_agent_info_t attribute, void* value) cons
     case HSA_AMD_AGENT_INFO_MEMORY_PROPERTIES:
       std::memset(value, 0, sizeof(uint8_t) * 8);
       break;
-    case HSA_AMD_AGENT_INFO_CLOCK_COUNTERS:
-      std::memset(value, 0, sizeof(hsa_amd_clock_counters_t));
+    case HSA_AMD_AGENT_INFO_CLOCK_COUNTERS: {
+      HsaClockCounters hsakmt_counters = {};
+      auto* counters = static_cast<hsa_amd_clock_counters_t*>(value);
+      if (driver().GetClockCounters(node_id(), &hsakmt_counters) != HSA_STATUS_SUCCESS) {
+        std::memset(value, 0, sizeof(hsa_amd_clock_counters_t));
+        break;
+      }
+      counters->cpu_clock_counter = hsakmt_counters.CPUClockCounter;
+      counters->gpu_clock_counter = hsakmt_counters.GPUClockCounter;
+      counters->system_clock_counter = hsakmt_counters.SystemClockCounter;
+      counters->system_clock_frequency = hsakmt_counters.SystemClockFrequencyHz;
       break;
+    }
     default:
       *static_cast<uint32_t*>(value) = 0;
       return HSA_STATUS_ERROR_INVALID_ARGUMENT;

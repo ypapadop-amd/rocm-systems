@@ -37,7 +37,8 @@ DynamicAqlQueue::DynamicAqlQueue(core::SharedQueue* shared_queue, DynamicAgent* 
   }
   MAKE_NAMED_SCOPE_GUARD(ring_buf_guard, [&] { agent->system_deallocator()(ring_buf_); });
 
-  amd_queue_.hsa_queue.type = HSA_QUEUE_TYPE_SINGLE;
+  amd_queue_.hsa_queue.type =
+      static_cast<hsa_queue_type32_t>(agent->properties().queue_type);
   amd_queue_.hsa_queue.features = 0;
   amd_queue_.hsa_queue.size = req_size_pkts;
   amd_queue_.hsa_queue.base_address = ring_buf_;
@@ -190,7 +191,8 @@ hsa_status_t DynamicAqlQueue::GetCUMasking(uint32_t num_cu_mask_count, uint32_t*
 }
 
 hsa_status_t DynamicAqlQueue::SetCUMasking(uint32_t num_cu_mask_count, const uint32_t* cu_mask) {
-  return HSA_STATUS_ERROR_INVALID_QUEUE;
+  return GetAgent()->driver().SetQueueCUMask(queue_id_, num_cu_mask_count,
+                                             const_cast<uint32_t*>(cu_mask));
 }
 
 void DynamicAqlQueue::ExecutePM4(uint32_t* cmd_data, size_t cmd_size_b,

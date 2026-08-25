@@ -55,6 +55,8 @@ public:
 
   const std::function<void(void*)>& system_deallocator() const { return system_deallocator_; }
 
+  const rocr_dynamic_driver_agent_props_t& properties() const { return props_; }
+
 private:
   void InitRegionList();
   void InitAllocators();

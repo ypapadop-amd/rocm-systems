@@ -27,7 +27,6 @@ typedef enum {
 /** Vendor opcode. */
 typedef enum {
   DYNACCEL_OPCODE_DISPATCH = 0,
-  DYNACCEL_OPCODE_NOP = 1,
 } dynaccel_opcode_t;
 
 /** Signature every dispatched function must have. */
