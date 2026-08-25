@@ -331,11 +331,10 @@ TEST(Memory, VMemMap) {
   ASSERT_NE(buffer, nullptr);
 
   const std::uint64_t offset = 0;
-  // May fail depending on driver support
-  EXPECT_NE(hsa_amd_vmem_map(buffer, allocation_size, offset, memory_handle, 0),
+  EXPECT_EQ(hsa_amd_vmem_map(buffer, allocation_size, offset, memory_handle, 0),
             HSA_STATUS_SUCCESS);
 
-  EXPECT_NE(hsa_amd_vmem_unmap(buffer, allocation_size), HSA_STATUS_SUCCESS);
+  EXPECT_EQ(hsa_amd_vmem_unmap(buffer, allocation_size), HSA_STATUS_SUCCESS);
   EXPECT_EQ(hsa_amd_vmem_address_free(buffer, allocation_size), HSA_STATUS_SUCCESS);
   EXPECT_EQ(hsa_amd_vmem_handle_release(memory_handle), HSA_STATUS_SUCCESS);
   EXPECT_EQ(hsa_shut_down(), HSA_STATUS_SUCCESS);

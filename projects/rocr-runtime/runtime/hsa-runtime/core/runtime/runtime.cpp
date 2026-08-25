@@ -4385,7 +4385,12 @@ hsa_status_t Runtime::MappedHandleAllowedAgent::EnableAccess(hsa_access_permissi
       agent->driver().GetDeviceFd(agent->node_id(), &mmap_fd);
     }
 
-    if (!rocr::os::MapMemory(va, size, PermissionsToMemProt(perms), mmap_fd,
+    /* mmap_fd is only used to let a third-party driver (e.g. kfd_peerdirect) look up this VA
+     * via the owning driver's shared device fd. Drivers that don't support that model (no
+     * per-node device fd) leave mmap_fd at -1; there is nothing to map in that case, so treat
+     * it as a no-op rather than a failure. */
+    if (mmap_fd >= 0 &&
+        !rocr::os::MapMemory(va, size, PermissionsToMemProt(perms), mmap_fd,
                              mappedHandle->mem_handle->driver_handle.mmap_offset)) {
       return HSA_STATUS_ERROR;
     }
