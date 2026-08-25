@@ -245,6 +245,17 @@ void OrderKernel(uint64_t* args, uint32_t n) {
   if (slot < 8) g_order[slot] = args[0];
 }
 
+std::atomic<uint64_t> g_accum_a{0};
+std::atomic<uint64_t> g_accum_b{0};
+
+void AccumKernelA(uint64_t* args, uint32_t n) {
+  if (n >= 1) g_accum_a.fetch_add(args[0], std::memory_order_acq_rel);
+}
+
+void AccumKernelB(uint64_t* args, uint32_t n) {
+  if (n >= 1) g_accum_b.fetch_add(args[0], std::memory_order_acq_rel);
+}
+
 // Enqueues one DynAccel packet and returns its completion signal.
 hsa_signal_t EnqueueDispatch(hsa_queue_t* queue, dynaccel_kernel_t fn, uint64_t* kernargs,
                              uint16_t num_kernargs) {
@@ -329,5 +340,111 @@ TEST(Dispatch, PacketsExecuteInOrder) {
 
   for (auto& s : signals) hsa_signal_destroy(s);
   hsa_queue_destroy(queue);
+  EXPECT_EQ(hsa_shut_down(), HSA_STATUS_SUCCESS);
+}
+
+TEST(Dispatch, DestroyQueueWithPendingPacket) {
+  ASSERT_EQ(hsa_init(), HSA_STATUS_SUCCESS);
+
+  std::vector<hsa_agent_t> dynamic_agents;
+  ASSERT_EQ(hsa_iterate_agents(discover_agents<HSA_DEVICE_TYPE_DYNAMIC>, &dynamic_agents),
+            HSA_STATUS_SUCCESS);
+  ASSERT_FALSE(dynamic_agents.empty());
+
+  hsa_queue_t* queue = CreateDynAccelQueue(dynamic_agents.front());
+  ASSERT_NE(queue, nullptr);
+
+  g_sum.store(0, std::memory_order_relaxed);
+  uint64_t kernarg = 7;
+  hsa_signal_t signal = EnqueueDispatch(queue, SumKernel, &kernarg, 1);
+
+  // Destroy the queue immediately, without waiting for the packet to complete.
+  // dynaccel_destroy_queue only signals the worker to stop and pthread_joins it --
+  // it never drains the ring -- so this races tear-down against in-flight work.
+  // The join guarantees the worker is fully stopped by the time this returns, so
+  // the signal is safe to touch afterward regardless of whether the packet ran.
+  EXPECT_EQ(hsa_queue_destroy(queue), HSA_STATUS_SUCCESS);
+
+  hsa_signal_destroy(signal);
+  EXPECT_EQ(hsa_shut_down(), HSA_STATUS_SUCCESS);
+}
+
+TEST(Dispatch, RingWraparound) {
+  ASSERT_EQ(hsa_init(), HSA_STATUS_SUCCESS);
+
+  std::vector<hsa_agent_t> dynamic_agents;
+  ASSERT_EQ(hsa_iterate_agents(discover_agents<HSA_DEVICE_TYPE_DYNAMIC>, &dynamic_agents),
+            HSA_STATUS_SUCCESS);
+  ASSERT_FALSE(dynamic_agents.empty());
+
+  hsa_queue_t* queue = CreateDynAccelQueue(dynamic_agents.front());
+  ASSERT_NE(queue, nullptr);
+
+  // Submit more dispatches than the ring has slots to force write_idx/read_index
+  // past a full lap, exercising dynaccel_execute's `index % q->num_pkts` slot reuse.
+  const uint32_t kNumDispatches = static_cast<uint32_t>(queue->size) * 2 + 5;
+
+  for (uint32_t i = 0; i < kNumDispatches; ++i) {
+    g_sum.store(0, std::memory_order_relaxed);
+    uint64_t kernarg = i;
+    hsa_signal_t signal = EnqueueDispatch(queue, SumKernel, &kernarg, 1);
+    ASSERT_EQ(hsa_signal_wait_scacquire(signal, HSA_SIGNAL_CONDITION_EQ, 0, 5000000000ull,
+                                        HSA_WAIT_STATE_ACTIVE),
+              0)
+        << "dispatch " << i << " did not complete";
+    EXPECT_EQ(g_sum.load(std::memory_order_acquire), i) << "dispatch " << i << " wrong result";
+    hsa_signal_destroy(signal);
+  }
+
+  hsa_queue_destroy(queue);
+  EXPECT_EQ(hsa_shut_down(), HSA_STATUS_SUCCESS);
+}
+
+TEST(Dispatch, ConcurrentQueuesIndependentExecution) {
+  ASSERT_EQ(hsa_init(), HSA_STATUS_SUCCESS);
+
+  std::vector<hsa_agent_t> dynamic_agents;
+  ASSERT_EQ(hsa_iterate_agents(discover_agents<HSA_DEVICE_TYPE_DYNAMIC>, &dynamic_agents),
+            HSA_STATUS_SUCCESS);
+  ASSERT_FALSE(dynamic_agents.empty());
+
+  hsa_queue_t* queue_a = CreateDynAccelQueue(dynamic_agents.front());
+  hsa_queue_t* queue_b = CreateDynAccelQueue(dynamic_agents.front());
+  ASSERT_NE(queue_a, nullptr);
+  ASSERT_NE(queue_b, nullptr);
+
+  g_accum_a.store(0, std::memory_order_relaxed);
+  g_accum_b.store(0, std::memory_order_relaxed);
+
+  constexpr uint32_t kNumRounds = 50;
+  std::vector<hsa_signal_t> signals_a(kNumRounds);
+  std::vector<hsa_signal_t> signals_b(kNumRounds);
+  std::vector<uint64_t> args_a(kNumRounds, 1);
+  std::vector<uint64_t> args_b(kNumRounds, 1000);
+
+  // Interleave submissions to queue A and queue B so their two worker threads run
+  // concurrently, then verify each queue's own kernel/accumulator observed exactly
+  // its own queue's dispatches -- no starvation, corruption, or cross-queue bleed.
+  for (uint32_t i = 0; i < kNumRounds; ++i) {
+    signals_a[i] = EnqueueDispatch(queue_a, AccumKernelA, &args_a[i], 1);
+    signals_b[i] = EnqueueDispatch(queue_b, AccumKernelB, &args_b[i], 1);
+  }
+
+  for (uint32_t i = 0; i < kNumRounds; ++i) {
+    ASSERT_EQ(hsa_signal_wait_scacquire(signals_a[i], HSA_SIGNAL_CONDITION_EQ, 0, 5000000000ull,
+                                        HSA_WAIT_STATE_ACTIVE),
+              0);
+    ASSERT_EQ(hsa_signal_wait_scacquire(signals_b[i], HSA_SIGNAL_CONDITION_EQ, 0, 5000000000ull,
+                                        HSA_WAIT_STATE_ACTIVE),
+              0);
+  }
+
+  EXPECT_EQ(g_accum_a.load(std::memory_order_acquire), kNumRounds * 1ull);
+  EXPECT_EQ(g_accum_b.load(std::memory_order_acquire), kNumRounds * 1000ull);
+
+  for (auto& s : signals_a) hsa_signal_destroy(s);
+  for (auto& s : signals_b) hsa_signal_destroy(s);
+  hsa_queue_destroy(queue_a);
+  hsa_queue_destroy(queue_b);
   EXPECT_EQ(hsa_shut_down(), HSA_STATUS_SUCCESS);
 }
