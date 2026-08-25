@@ -194,6 +194,55 @@ static hsa_status_t dynaccel_export_memory_handle(rocr_dynamic_driver_context_t*
   return HSA_STATUS_SUCCESS;
 }
 
+/* This driver never needs to leave the allocating process to make an allocation
+ * shareable, so create_shareable_handle is a validating no-op: the allocation
+ * handle produced by allocate_memory is already usable as a shareable handle
+ * (real cross-process sharing goes through export_memory_handle/
+ * import_memory_handle instead). */
+static hsa_status_t dynaccel_create_shareable_handle(rocr_dynamic_driver_context_t* ctx, void* va,
+                                                     void* mem, size_t size, uint32_t node_id,
+                                                     rocr_dynamic_driver_memory_handle_t* handle,
+                                                     uint64_t* offset) {
+  (void)va; (void)size; (void)node_id; (void)handle;
+  if (!ctx || !mem || !offset) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
+
+  pthread_mutex_lock(&ctx->lock);
+  struct dynaccel_alloc* a = dynaccel_find_alloc(ctx, mem);
+  pthread_mutex_unlock(&ctx->lock);
+  if (!a) return HSA_STATUS_ERROR_INVALID_ALLOCATION;
+
+  *offset = 0;
+  return HSA_STATUS_SUCCESS;
+}
+
+/* Because create_shareable_handle above never allocates a separate resource,
+ * this is the sole teardown path for VMem-created handles (they are never
+ * passed to free_memory) - so it must release the same allocation
+ * free_memory would. See the race note above free_memory: the same
+ * unlink-then-release ordering applies here. */
+static hsa_status_t dynaccel_destroy_memory_handle(rocr_dynamic_driver_context_t* ctx,
+                                                   rocr_dynamic_driver_memory_handle_t* handle) {
+  if (!ctx || !handle) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
+
+  void* const mem = (void*)(uintptr_t)handle->handle;
+
+  pthread_mutex_lock(&ctx->lock);
+  struct dynaccel_alloc** link = &ctx->allocs;
+  while (*link && (*link)->ptr != mem) link = &(*link)->next;
+  struct dynaccel_alloc* a = *link;
+  if (a) *link = a->next;
+  pthread_mutex_unlock(&ctx->lock);
+
+  if (!a) return HSA_STATUS_ERROR_INVALID_ALLOCATION;
+
+  munmap(a->ptr, a->size);
+  if (a->dmabuf_fd >= 0) close(a->dmabuf_fd);
+  free(a);
+
+  *handle = (rocr_dynamic_driver_memory_handle_t){0};
+  return HSA_STATUS_SUCCESS;
+}
+
 /* ---- Queues ---- */
 
 struct dynaccel_queue {
@@ -485,6 +534,8 @@ static rocr_dynamic_driver_ftable_t g_ftable = {
     .allocate_memory = dynaccel_allocate_memory,
     .free_memory = dynaccel_free_memory,
     .export_memory_handle = dynaccel_export_memory_handle,
+    .create_shareable_handle = dynaccel_create_shareable_handle,
+    .destroy_memory_handle = dynaccel_destroy_memory_handle,
     .create_queue = dynaccel_create_queue,
     .destroy_queue = dynaccel_destroy_queue,
     .destroy_context = dynaccel_destroy_context,
