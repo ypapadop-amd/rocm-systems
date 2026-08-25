@@ -249,13 +249,11 @@ typedef struct rocr_dynamic_driver_ftable_t {
    * @param[in]  alloc_flags  Allocation flags (cast of
    *                          @c core::MemoryRegion::AllocateFlags).
    * @param[in]  mem_flags    KFD-level memory flags describing the heap.
-   * @param[in]  mem_props    Memory properties of the target region.
    * @param[out] mem          Pointer to the allocated memory.
    * @return HSA_STATUS_SUCCESS on success.
    */
   hsa_status_t (*allocate_memory)(rocr_dynamic_driver_context_t* ctx, uint32_t node_id, size_t size,
-                                  uint32_t alloc_flags, HsaMemFlags mem_flags,
-                                  HsaMemoryProperties mem_props, void** mem);
+                                  uint32_t alloc_flags, HsaMemFlags mem_flags, void** mem);
 
   /**
    * @brief Free memory previously allocated with @c allocate_memory.

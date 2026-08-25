@@ -98,9 +98,8 @@ static int dynaccel_make_udmabuf(int udmabuf_fd, size_t size) {
 
 static hsa_status_t dynaccel_allocate_memory(rocr_dynamic_driver_context_t* ctx, uint32_t node_id,
                                              size_t size, uint32_t alloc_flags,
-                                             HsaMemFlags mem_flags, HsaMemoryProperties mem_props,
-                                             void** mem) {
-  (void)node_id; (void)alloc_flags; (void)mem_flags; (void)mem_props;
+                                             HsaMemFlags mem_flags, void** mem) {
+  (void)node_id; (void)alloc_flags; (void)mem_flags;
   if (!ctx || !mem || size == 0) return HSA_STATUS_ERROR_INVALID_ARGUMENT;
 
   const size_t rounded = dynaccel_round_up_page(size);

@@ -168,8 +168,7 @@ hsa_status_t DynamicDriver::AllocateMemory(const core::MemoryRegion& mem_region,
 
   void* mem = nullptr;
   const hsa_status_t status = ftable_->allocate_memory(
-      ctx_, node_id, size, static_cast<uint32_t>(alloc_flags), amd_region.mem_flags(),
-      amd_region.mem_props(), &mem);
+      ctx_, node_id, size, static_cast<uint32_t>(alloc_flags), amd_region.mem_flags(), &mem);
   if (status != HSA_STATUS_SUCCESS) return status;
 
   // Mirrors KfdDriver: the allocation address is both the native id and the
